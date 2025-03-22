@@ -776,8 +776,8 @@ function showGameComplete() {
     roomIdElement.textContent = data.roomId;
     
     // Generate controller URL
-    const domain = window.location.hostname;
-    const controllerUrl = `${window.location.protocol}//${domain}/controller.html?room=${data.roomId}`;
+    const domain = 'putt.futurepr0n.com';
+    const controllerUrl = `https://${domain}/controller.html?room=${data.roomId}`;
     
     // Display controller link
     controllerLinkElement.textContent = controllerUrl;
