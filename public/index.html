@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pocket Mini Golf</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      text-align: center;
+      background-color: #355E3B; /* Golf green color */
+      color: white;
+    }
+    h1 {
+      color: white;
+      text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+    }
+    .container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .button {
+      display: inline-block;
+      background-color: #4CAF50;
+      color: white;
+      padding: 15px 30px;
+      margin: 10px;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 18px;
+      text-decoration: none;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    }
+    .button:hover {
+      background-color: #45a049;
+      transform: translateY(-2px);
+      box-shadow: 0 6px 12px rgba(0, 0, 0, 0.3);
+      transition: all 0.2s ease;
+    }
+    .join-form {
+      margin-top: 30px;
+      padding: 20px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 10px;
+      background-color: rgba(0, 0, 0, 0.2);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      width: 90%;
+      max-width: 500px;
+    }
+    input {
+      padding: 12px;
+      font-size: 16px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      margin-right: 10px;
+      width: 70%;
+      max-width: 300px;
+    }
+    .room-list {
+      margin-top: 20px;
+      text-align: left;
+      width: 100%;
+    }
+    .room-item {
+      padding: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      margin: 8px 0;
+      border-radius: 5px;
+      cursor: pointer;
+      background-color: rgba(0, 0, 0, 0.1);
+      transition: all 0.2s ease;
+    }
+    .room-item:hover {
+      background-color: rgba(0, 0, 0, 0.3);
+      transform: translateX(5px);
+    }
+    .logo {
+      margin-bottom: 20px;
+      font-size: 40px;
+    }
+    .tag-line {
+      font-style: italic;
+      margin-bottom: 30px;
+      opacity: 0.8;
+    }
+    .features {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin: 30px 0;
+    }
+    .feature {
+      background-color: rgba(0, 0, 0, 0.2);
+      border-radius: 10px;
+      padding: 15px;
+      margin: 10px;
+      width: 200px;
+      text-align: center;
+    }
+    .feature-icon {
+      font-size: 30px;
+      margin-bottom: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo">⛳</div>
+    <h1>Pocket Mini Golf</h1>
+    <p class="tag-line">Use your phone as a golf club and putt across challenging courses!</p>
+    
+    <div class="features">
+      <div class="feature">
+        <div class="feature-icon">📱</div>
+        <h3>Phone as Club</h3>
+        <p>Use your phone's motion controls to putt the ball</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">🏆</div>
+        <h3>Multiple Courses</h3>
+        <p>Challenge yourself with increasingly difficult holes</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">👥</div>
+        <h3>Multiplayer Ready</h3>
+        <p>Share your room code to play with friends</p>
+      </div>
+    </div>
+    
+    <a href="/create-room" class="button">Start New Game</a>
+    
+    <div class="join-form">
+      <h2>Join Existing Game</h2>
+      <input type="text" id="roomIdInput" placeholder="Enter Room ID">
+      <button id="joinButton" class="button">Join Game</button>
+      
+      <div class="room-list" id="roomList">
+        <h3>Active Games</h3>
+        <div id="activeRooms">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Join a room by ID
+    document.getElementById('joinButton').addEventListener('click', function() {
+      const roomId = document.getElementById('roomIdInput').value.trim();
+      if (roomId) {
+        window.location.href = `/game.html?room=${roomId}`;
+      } else {
+        alert('Please enter a valid Room ID');
+      }
+    });
+    
+    // Fetch active rooms
+    async function fetchRooms() {
+      try {
+        const response = await fetch('/rooms');
+        const data = await response.json();
+        
+        const roomsContainer = document.getElementById('activeRooms');
+        
+        if (data.rooms.length === 0) {
+          roomsContainer.innerHTML = '<p>No active games available. Start a new game!</p>';
+          return;
+        }
+        
+        let roomsHtml = '';
+        data.rooms.forEach(roomId => {
+          roomsHtml += `<div class="room-item" onclick="joinRoom('${roomId}')">Game Room: ${roomId}</div>`;
+        });
+        
+        roomsContainer.innerHTML = roomsHtml;
+      } catch (error) {
+        console.error('Error fetching rooms:', error);
+        document.getElementById('activeRooms').innerHTML = '<p>Error loading rooms. Please try again.</p>';
+      }
+    }
+    
+    function joinRoom(roomId) {
+      window.location.href = `/game.html?room=${roomId}`;
+    }
+    
+    // Fetch rooms on page load
+    fetchRooms();
+    
+    // Refresh room list periodically
+    setInterval(fetchRooms, 30000); // Every 30 seconds
+  </script>
+</body>
+</html>

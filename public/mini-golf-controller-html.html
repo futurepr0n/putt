@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Mini Golf Controller</title>
+  <style>
+    body {
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      background-color: #355E3B; /* Golf green color */
+      font-family: Arial, sans-serif;
+      touch-action: none; /* Prevent browser handling of touch gestures */
+      color: white;
+    }
+    .button {
+      width: 80%;
+      height: 60px;
+      font-size: 18px;
+      margin: 10px 0;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    #permissionButton {
+      background-color: #2196F3;
+      color: white;
+      font-weight: bold;
+    }
+    #throwButton {
+      height: 120px;
+      background-color: #4CAF50;
+      color: white;
+      font-size: 24px;
+    }
+    #statusDisplay {
+      font-size: 18px;
+      color: white;
+      margin: 20px;
+      text-align: center;
+      padding: 10px;
+      max-width: 80%;
+    }
+    #connectionStatus {
+      margin-top: 20px;
+      padding: 10px;
+      border-radius: 5px;
+      text-align: center;
+      width: 80%;
+    }
+    .connected {
+      background-color: rgba(76, 175, 80, 0.5);
+    }
+    .disconnected {
+      background-color: rgba(244, 67, 54, 0.5);
+    }
+    .permission-section {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 100%;
+      margin-bottom: 20px;
+    }
+    .ios-note {
+      font-style: italic;
+      color: #EEE;
+      font-size: 14px;
+      margin-top: 5px;
+      text-align: center;
+      max-width: 80%;
+    }
+    #debugInfo {
+      position: fixed;
+      bottom: 10px;
+      left: 10px;
+      font-size: 12px;
+      color: #EEE;
+      max-width: 80%;
+      background-color: rgba(0, 0, 0, 0.7);
+      padding: 5px;
+      border-radius: 5px;
+    }
+    
+    /* Golf-specific styling */
+    h2 {
+      color: white;
+      text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+    }
+    
+    .golf-icon {
+      font-size: 24px;
+      margin-bottom: 10px;
+    }
+    
+    .control-guide {
+      margin-top: 20px;
+      padding: 10px;
+      background-color: rgba(0, 0, 0, 0.5);
+      border-radius: 5px;
+      font-size: 14px;
+      max-width: 80%;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div id="roomInfo">
+    <h2>Mini Golf Controller</h2>
+  </div>
+  
+  <div id="statusDisplay">Loading...</div>
+  
+  <div class="permission-section" id="permissionSection">
+    <h3>iOS Permission Required</h3>
+    <button id="permissionButton" class="button">TAP HERE TO ENABLE CLUB MOTION</button>
+    <p class="ios-note">iOS requires permission to use motion controls for putting</p>
+  </div>
+  
+  <button id="throwButton" class="button">HOLD TO PUTT</button>
+  
+  <div class="control-guide">
+    Hold the button and swing your phone like a golf club to putt the ball
+  </div>
+  
+  <div id="connectionStatus">Connecting to server...</div>
+  
+  <div id="debugInfo"></div>
+  
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.1/socket.io.min.js"></script>
+  <script src="controller.js"></script>
+</body>
+</html>

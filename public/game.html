@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Pocket Mini Golf</title>
+  <style>
+    body { 
+      margin: 0; 
+      overflow: hidden; 
+      font-family: Arial, sans-serif;
+      background-color: #000;
+    }
+    
+    #gameInfo {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background-color: rgba(0, 0, 0, 0.7);
+      color: white;
+      padding: 15px;
+      border-radius: 5px;
+      z-index: 100;
+      max-width: 250px;
+    }
+    
+    #qrCodeContainer {
+      margin-top: 15px;
+      background-color: white;
+      padding: 10px;
+      border-radius: 5px;
+      text-align: center;
+    }
+    
+    #controllerLink {
+      word-break: break-all;
+      margin-top: 10px;
+      font-size: 12px;
+      color: #cccccc;
+    }
+    
+    #roomId {
+      font-weight: bold;
+      user-select: all;
+    }
+    
+    .hidden {
+      display: none;
+    }
+    
+    #connectionStatus {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      padding: 8px 12px;
+      border-radius: 5px;
+      font-weight: bold;
+      z-index: 100;
+    }
+    
+    .connected {
+      background-color: rgba(0, 128, 0, 0.7);
+      color: white;
+    }
+    
+    .disconnected {
+      background-color: rgba(255, 0, 0, 0.7);
+      color: white;
+    }
+    
+    #closeInfo {
+      cursor: pointer;
+      float: right;
+      font-weight: bold;
+    }
+    
+    .game-title {
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 24px;
+      font-weight: bold;
+      color: white;
+      text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.7);
+      z-index: 100;
+    }
+    
+    #strokeCounter, #parDisplay {
+      position: absolute;
+      bottom: 10px;
+      color: white;
+      background-color: rgba(0, 0, 0, 0.7);
+      padding: 8px 12px;
+      border-radius: 5px;
+      font-weight: bold;
+      z-index: 100;
+    }
+    
+    #strokeCounter {
+      left: 10px;
+    }
+    
+    #parDisplay {
+      right: 10px;
+    }
+    
+    /* Loading overlay */
+    #loadingOverlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0, 0, 0, 0.8);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      z-index: 1000;
+      color: white;
+      font-size: 24px;
+    }
+    
+    #loadingOverlay img {
+      width: 80px;
+      height: 80px;
+      margin-bottom: 20px;
+      animation: spin 2s linear infinite;
+    }
+    
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="game-title">Pocket Mini Golf</div>
+  
+  <div id="gameInfo">
+    <span id="closeInfo">×</span>
+    <h2>Golf Room</h2>
+    <div>Room ID: <span id="roomId">Loading...</span></div>
+    <div id="qrCodeContainer"></div>
+    <div id="controllerLink"></div>
+    <div>Scan QR code or share Room ID to connect your golf club controller.</div>
+  </div>
+  
+  <div id="connectionStatus" class="disconnected">Not Connected</div>
+  
+  <div id="loadingOverlay">
+    <div>Loading Mini Golf Course...</div>
+    <div style="margin-top: 20px;">Please wait</div>
+  </div>
+  
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cannon.js/0.6.2/cannon.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.1/socket.io.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script>
+    // Simple function to hide loading overlay when game is ready
+    window.addEventListener('load', function() {
+      // We'll hide it after a slight delay to ensure all resources are loaded
+      setTimeout(function() {
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        if (loadingOverlay) {
+          loadingOverlay.style.opacity = '0';
+          loadingOverlay.style.transition = 'opacity 0.5s';
+          setTimeout(function() {
+            loadingOverlay.style.display = 'none';
+          }, 500);
+        }
+      }, 1500);
+    });
+  </script>
+  <script src="game.js"></script>
+</body>
+</html>
