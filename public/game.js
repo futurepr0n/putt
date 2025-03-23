@@ -112,18 +112,21 @@ function createCourse(courseNumber) {
     const groundBody = new CANNON.Body({ mass: 0 });
     groundBody.addShape(heightfieldShape);
     world.addBody(groundBody);
+
+
+
     
     // Add the hole (cup)
-    createHole(0, courseSize.length/2 - 1);
+    createHole(0, courseSize.length/2 - 2);
     
     // Add tee marker
-    createTeeMarker(0, -courseSize.length/2 + 1);
+    createTeeMarker(0, -courseSize.length/2 + 3);
     
     // Add boundaries
     createBoundaries(courseSize);
     
     // Create ball at the tee position (IMPORTANT: Create ball before obstacles that need to reference it)
-    createBall(0, 0.5, -courseSize.length/2 + 1);
+    createBall(0, 0.5, -courseSize.length/2 + 3);
     
     // Add obstacles based on course number (Now the ball exists when this runs)
     addObstacles(courseNumber, courseSize);
@@ -246,14 +249,32 @@ function createHole(x, z) {
 
 // Create tee marker
 function createTeeMarker(x, z) {
-    const teeGeometry = new THREE.CylinderGeometry(0.1, 0.1, 0.05, 16);
-    const teeMaterial = new THREE.MeshStandardMaterial({ color: 0xFFFFFF });
+    // Make the tee marker more visible
+    const teeGeometry = new THREE.CylinderGeometry(0.2, 0.2, 0.05, 16);
+    const teeMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0xFFFFFF,
+      emissive: 0x333333
+    });
     const teeMesh = new THREE.Mesh(teeGeometry, teeMaterial);
-    teeMesh.position.set(x, 0.03, z);
+    
+    // Position it higher to be more visible
+    teeMesh.position.set(x, 0.05, z);
     teeMesh.receiveShadow = true;
     scene.add(teeMesh);
     
     console.log("Created tee marker at position:", {x, z});
+    
+    // Also add a visual indicator for the tee area
+    const teeAreaGeometry = new THREE.CircleGeometry(0.4, 32);
+    const teeAreaMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0x90EE90, // Light green
+      transparent: true,
+      opacity: 0.7
+    });
+    const teeAreaMesh = new THREE.Mesh(teeAreaGeometry, teeAreaMaterial);
+    teeAreaMesh.rotation.x = -Math.PI / 2; // Flat on ground
+    teeAreaMesh.position.set(x, 0.01, z);
+    scene.add(teeAreaMesh);
     
     window.teePosition = { x, z };
   }
@@ -266,8 +287,8 @@ function createBall(x, y, z) {
     const ballGeometry = new THREE.SphereGeometry(ballRadius, 32, 32);
     const ballMaterial = new THREE.MeshStandardMaterial({ 
       color: 0xFFFFFF,
-      emissive: 0x222222,  // Add slight emissive to make ball more visible
-      roughness: 0.2       // Make it slightly shiny
+      emissive: 0x222222,
+      roughness: 0.2
     });
     const ballMesh = new THREE.Mesh(ballGeometry, ballMaterial);
     ballMesh.castShadow = true;
@@ -276,15 +297,17 @@ function createBall(x, y, z) {
     
     console.log("Creating ball at position:", {x, y, z});
     
-    // Physics body
+    // Physics body with higher position to prevent falling through ground
     const ballBody = new CANNON.Body({ 
-      mass: 0.045, // Golf ball is about 45 grams
-      linearDamping: 0.5, // More damping for grass
-      angularDamping: 0.5, // More rotational damping
-      allowSleep: false    // Prevent the ball from sleeping (important!)
+      mass: 0.045,
+      linearDamping: 0.5,
+      angularDamping: 0.5,
+      allowSleep: false
     });
     ballBody.addShape(new CANNON.Sphere(ballRadius));
-    ballBody.position.set(x, y, z);
+    
+    // Position ball higher above ground to prevent clipping
+    ballBody.position.set(x, y + 0.2, z); // Increase the height
     world.addBody(ballBody);
     
     // Material for ball physics
@@ -293,10 +316,26 @@ function createBall(x, y, z) {
       restitution: 0.7
     });
     
+    // Add a contact material between ball and ground to prevent sinking
+    const groundContact = new CANNON.ContactMaterial(
+      ballBody.material,
+      new CANNON.Material(), // Default material for ground
+      {
+        friction: 0.4,
+        restitution: 0.5,
+        contactEquationStiffness: 1e8,
+        contactEquationRelaxation: 3
+      }
+    );
+    world.addContactMaterial(groundContact);
+    
     // Store references to the ball objects
     window.ballMesh = ballMesh;
     window.ballBody = ballBody;
     window.ballRadius = ballRadius;
+    
+    // Don't count a stroke until player actually putts
+    ballInMotion = false;
   }
 
 // Create boundaries for the course
@@ -727,11 +766,16 @@ function showGameComplete() {
     
     // If ball goes out of bounds or falls in a hole, reset it
     if (pos.y < -5 || pos.x < -10 || pos.x > 10 || pos.z < -10 || pos.z > 10) {
-      resetBall();
-      strokeCount++; // Penalty stroke for out of bounds
-      updateStrokeDisplay();
-      puttFeedback.textContent = 'Out of bounds! +1 stroke penalty';
-    }
+        if (strokeCount > 0) { // Only add penalty if player has made at least one stroke
+          strokeCount++; // Penalty stroke for out of bounds
+          updateStrokeDisplay();
+          puttFeedback.textContent = 'Out of bounds! +1 stroke penalty';
+        } else {
+          // If no strokes yet, just reset the ball without penalty
+          puttFeedback.textContent = 'Ball reset';
+        }
+        resetBall();
+      }
     
     // If ball is moving very slowly for too long, it's probably stuck
     if (Date.now() - lastPuttTime > resetDelay && 
