@@ -613,177 +613,46 @@ function setupContactDetection() {
     const bodyA = event.bodyA;
     const bodyB = event.bodyB;
     
-    // Check if one of the bodies is the ball and the other is a safety floor
+    // Check for safety floor contacts (existing code)
     if ((bodyA === window.ballBody && bodyB.isSafetyFloor) || 
         (bodyB === window.ballBody && bodyA.isSafetyFloor)) {
       
-      // If the ball has significant downward velocity, it probably fell through the terrain
       if (window.ballBody.velocity.y < -5) {
-        console.log("Ball hit safety floor with high velocity, might have fallen through terrain");
-        
-        // Apply a gentle upward force to bounce it back onto the course
+        console.log("Ball hit safety floor with high velocity");
         window.ballBody.velocity.y = Math.abs(window.ballBody.velocity.y) * 0.5;
         
-        // If the ball is very deep, reset it
         if (window.ballBody.position.y < -10) {
           resetBall();
         }
       }
     }
     
-    // Check for hole contact
+    // Check for hole trigger contact
     if ((bodyA === window.ballBody && bodyB.isHoleTrigger) || 
         (bodyB === window.ballBody && bodyA.isHoleTrigger)) {
       
-      console.log("Ball contacted hole trigger zone");
+      console.log("Ball contacted hole physics");
       
-      // If ball is moving slowly enough, trigger hole completion
+      // Only trigger if ball is moving slowly enough and close to center
       const velocity = window.ballBody.velocity;
-      const speed = Math.sqrt(velocity.x*velocity.x + velocity.y*velocity.y + velocity.z*velocity.z);
+      const horizontalSpeed = Math.sqrt(velocity.x*velocity.x + velocity.z*velocity.z);
       
-      if (speed < 2.0 && !window.holeInProgress && !courseCompleted) {
+      const ballPos = window.ballBody.position;
+      const dx = ballPos.x - window.holeCenterX;
+      const dz = ballPos.z - window.holeCenterZ;
+      const distanceToCenter = Math.sqrt(dx*dx + dz*dz);
+      
+      // More forgiving conditions on actual collision
+      if (horizontalSpeed < 2.0 && distanceToCenter < window.holeRadius * 1.2 && !window.holeInProgress && !courseCompleted) {
         console.log("Ball in hole detected via contact!");
         startHoleAnimation();
       }
     }
   });
 }
-
 // Create the hole (cup)
-function createHole(x, z) {
-  // Visual representation of the hole
-  const holeRadius = 0.15;
-  const holeDepth = 0.1;
-  
-  // Create hole (black circle)
-  const holeGeometry = new THREE.CylinderGeometry(holeRadius, holeRadius, holeDepth, 32);
-  const holeMesh = new THREE.Mesh(holeGeometry, holeMaterial);
-  holeMesh.position.set(x, 0.01, z); // Slightly above ground to avoid z-fighting
-  holeMesh.receiveShadow = true;
-  scene.add(holeMesh);
-  
-  // Create flag pole
-  const poleHeight = 1;
-  const poleRadius = 0.01;
-  const poleGeometry = new THREE.CylinderGeometry(poleRadius, poleRadius, poleHeight, 8);
-  const poleMesh = new THREE.Mesh(poleGeometry, poleMatrial);
-  poleMesh.position.set(x, poleHeight/2, z);
-  poleMesh.castShadow = true;
-  scene.add(poleMesh);
-  
-  // Create flag
-  const flagGeometry = new THREE.PlaneGeometry(0.3, 0.2);
-  const flagMesh = new THREE.Mesh(flagGeometry, flagMaterial);
-  flagMesh.position.set(x + 0.15, 0.8, z);
-  flagMesh.castShadow = true;
-  scene.add(flagMesh);
-  
-  // REDUCED TRIGGER ZONE SIZE - much more precise
-  // Only slightly larger than the actual hole
-  const triggerRadius = holeRadius * 1.8; // Reduced from 5x to 1.8x
-  const triggerHeight = 0.2;
-  const triggerGeometry = new THREE.CylinderGeometry(triggerRadius, triggerRadius, triggerHeight, 32);
-  const triggerMaterial = new THREE.MeshBasicMaterial({ 
-    color: 0x00FF00, 
-    transparent: true, 
-    opacity: window.showPhysicsDebug ? 0.2 : 0 
-  });
-  const triggerMesh = new THREE.Mesh(triggerGeometry, triggerMaterial);
-  triggerMesh.position.set(x, triggerHeight/2, z);
-  scene.add(triggerMesh);
-  
-  // Create an invisible physics body for the hole area
-  const holeBody = new CANNON.Body({
-    mass: 0,
-    collisionResponse: false,
-    type: CANNON.Body.STATIC
-  });
-  
-  // Use a cylinder shape for the hole trigger zone
-  const holeShape = new CANNON.Cylinder(triggerRadius, triggerRadius, triggerHeight, 16);
-  holeBody.addShape(holeShape);
-  holeBody.position.set(x, triggerHeight/2, z);
-  holeBody.isHoleTrigger = true; // Mark it as a hole trigger for collision detection
-  world.addBody(holeBody);
-  
-  // Create a wider attraction zone (separate from trigger)
-  // This helps guide the ball toward the hole when it's close
-  const attractionRadius = holeRadius * 4; 
-  
-  // Store references for collision detection
-  window.holeMesh = holeMesh;
-  window.holeTriggerMesh = triggerMesh;
-  window.holeBody = holeBody;
-  window.holeRadius = holeRadius;
-  window.holeTriggerRadius = triggerRadius;
-  window.holeAttractionRadius = attractionRadius;
-  window.holeCenterX = x;
-  window.holeCenterZ = z;
-  window.holeInProgress = false;
-  
-  console.log("Hole created at:", {x, z}, "with trigger radius:", triggerRadius);
-}
+// Create the hole (cup)
 
-
-
-
-function checkBallInHole() {
-  if (courseCompleted || !window.ballBody || window.holeCenterX === undefined || window.holeCenterZ === undefined) return;
-  
-  // If hole animation is already in progress, don't check again
-  if (window.holeInProgress) return;
-  
-  const ballPos = window.ballBody.position;
-  const holeX = window.holeCenterX;
-  const holeZ = window.holeCenterZ;
-  
-  // Calculate distance from ball to hole center (horizontal only)
-  const dx = ballPos.x - holeX;
-  const dz = ballPos.z - holeZ;
-  const distance = Math.sqrt(dx*dx + dz*dz);
-  
-  // Check ball speed
-  const velocity = window.ballBody.velocity;
-  const horizontalSpeed = Math.sqrt(velocity.x*velocity.x + velocity.z*velocity.z);
-  
-  // Display debug info if enabled
-  if (window.showPhysicsDebug) {
-    console.log(`Distance to hole: ${distance.toFixed(2)}, Speed: ${horizontalSpeed.toFixed(2)}, Y: ${ballPos.y.toFixed(2)}`);
-    
-    // Make the trigger zone visible in debug mode
-    if (window.holeTriggerMesh) {
-      window.holeTriggerMesh.material.opacity = 0.2;
-    }
-  } else if (window.holeTriggerMesh) {
-    window.holeTriggerMesh.material.opacity = 0;
-  }
-  
-  // STRICTER CONDITIONS for ball in hole:
-  // 1. Ball must be very close to the hole center
-  // 2. Ball must be moving slowly enough
-  // 3. Ball must be at a reasonable height
-  if (distance < window.holeTriggerRadius && horizontalSpeed < 1.5 && ballPos.y < 0.15) {
-    // Extra check - must be directly over the hole
-    if (distance < window.holeRadius * 1.5) {
-      console.log("Ball in hole! Distance:", distance, "Speed:", horizontalSpeed);
-      startHoleAnimation();
-    }
-  }
-  
-  // Apply a gentle attraction toward the hole when close (using the wider attraction radius)
-  if (distance < window.holeAttractionRadius && horizontalSpeed < 2.0 && ballPos.y < 0.3) {
-    // Stronger attraction when closer to hole
-    const attractionStrength = 0.01 * (1 - distance / window.holeAttractionRadius);
-    const forceX = -dx * attractionStrength * (window.holeAttractionRadius / distance);
-    const forceZ = -dz * attractionStrength * (window.holeAttractionRadius / distance);
-    
-    // Apply the force
-    window.ballBody.applyForce(
-      new CANNON.Vec3(forceX, 0, forceZ),
-      window.ballBody.position
-    );
-  }
-}
 
 
 

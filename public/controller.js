@@ -62,33 +62,62 @@ function stopSendingOrientation() {
 function sendOrientationData() {
   if (!socket.connected) return;
   
-  // Calculate direction based on device orientation ONLY
-  // No automatic pointing toward the hole
-  const direction = {
-    // Reduced power for more precise control
-    x: -Math.sin(currentOrientation.gamma * (Math.PI / 180)) * 15,
-    y: Math.sin(currentOrientation.beta * (Math.PI / 180)) * 5,
-    z: Math.cos(currentOrientation.gamma * (Math.PI / 180)) * 15
-  };
+  let direction = { x: 0, y: 0, z: 0 };
   
-  // Apply additional scaling based on tilt intensity
-  // Calculate total tilt amount
-  const betaTilt = Math.abs(currentOrientation.beta - 45); // Deviation from 45 degrees
-  const gammaTilt = Math.abs(currentOrientation.gamma);
-  const totalTilt = Math.sqrt(betaTilt * betaTilt + gammaTilt * gammaTilt);
+  // Get orientation data
+  const beta = currentOrientation.beta || 0;
+  const gamma = currentOrientation.gamma || 0;
+  const alpha = currentOrientation.alpha || 0;
   
-  // Apply a power multiplier based on tilt intensity
-  // More tilt = more power, but cap it for stability
-  let powerMultiplier = Math.min(totalTilt / 30, 1.2);
+  if (directionMode === 'relative') {
+    // Original relative mode using only gamma
+    const normalizedBeta = (beta - 45) / 45; // Center around 45 degrees
+    const normalizedGamma = gamma / 45;      // Normalize to range of -1 to 1
+    
+    // Calculate direction components with moderate sensitivity
+    direction = {
+      x: -Math.sin(gamma * (Math.PI / 180)) * 15,
+      y: Math.sin(beta * (Math.PI / 180)) * 5,
+      z: Math.cos(gamma * (Math.PI / 180)) * 15
+    };
+  } else {
+    // Absolute mode using alpha (compass) for 360-degree control
+    // Calculate angle relative to reference
+    let angle = ((alpha - referenceAngle) + 360) % 360;
+    // Convert to radians
+    let angleRad = angle * (Math.PI / 180);
+    
+    // Use beta for power/intensity
+    const betaFactor = Math.max(0, (beta - 30) / 60); // 0 to 1 range, starts at 30 degrees
+    const intensity = Math.min(betaFactor * 20, 15);  // Scale and limit intensity
+    
+    // Calculate direction components using polar coordinates
+    direction = {
+      x: -Math.sin(angleRad) * intensity,
+      y: Math.min(beta / 90, 0.5) * 10,      // Vertical component
+      z: -Math.cos(angleRad) * intensity      // Negative cos for correct direction
+    };
+  }
   
-  // Apply the multiplier to the direction vector
+  // Add a tilt-based power multiplier
+  const tiltFactor = Math.min(Math.abs(beta - 45) / 30, 1.0);
+  const powerMultiplier = 0.5 + tiltFactor;
+  
   direction.x *= powerMultiplier;
-  direction.y *= powerMultiplier;
   direction.z *= powerMultiplier;
   
   // Send the direction data to the server
   socket.emit('orientation', direction);
 }
+
+// Add UI components when page loads
+window.addEventListener('DOMContentLoaded', function() {
+  addDirectionModeToggle();
+  addCalibrationButton();
+  
+  // Initialize with current orientation values
+  currentOrientation = { alpha: 0, beta: 0, gamma: 0 };
+});
 
 
 
@@ -194,26 +223,144 @@ function showPuttButton() {
   window.addEventListener('devicemotion', function() {}, true);
 }
 
+
+function addDirectionModeToggle() {
+  // Check if button already exists
+  if (document.getElementById('directionModeToggle')) return;
+  
+  const toggleButton = document.createElement('button');
+  toggleButton.id = 'directionModeToggle';
+  toggleButton.textContent = '360° Aiming: Off';
+  toggleButton.style.position = 'fixed';
+  toggleButton.style.top = '10px';
+  toggleButton.style.right = '10px';
+  toggleButton.style.padding = '8px 12px';
+  toggleButton.style.backgroundColor = 'rgba(0, 0, 255, 0.7)';
+  toggleButton.style.color = 'white';
+  toggleButton.style.border = 'none';
+  toggleButton.style.borderRadius = '5px';
+  toggleButton.style.zIndex = '1000';
+  
+  toggleButton.addEventListener('click', function() {
+    toggleDirectionMode();
+    this.textContent = `360° Aiming: ${directionMode === 'absolute' ? 'On' : 'Off'}`;
+    this.style.backgroundColor = directionMode === 'absolute' ? 'rgba(0, 128, 0, 0.7)' : 'rgba(0, 0, 255, 0.7)';
+  });
+  
+  document.body.appendChild(toggleButton);
+}
+
+// Add calibration functionality
+let isCalibrating = false;
+let calibrationAngle = 0;
+let calibrationStartGamma = 0;
+let calibrationStartAlpha = 0;
+
+let directionMode = 'relative'; // 'relative' or 'absolute'
+let referenceAngle = 0;
+
+// Function to toggle between direction modes
+function toggleDirectionMode() {
+  directionMode = directionMode === 'relative' ? 'absolute' : 'relative';
+  
+  // Update UI to show current mode
+  if (statusDisplay) {
+    statusDisplay.textContent = `Direction mode: ${directionMode === 'relative' ? 'Relative to phone' : '360° aiming'}`;
+  }
+  
+  // Set reference angle when switching to absolute mode
+  if (directionMode === 'absolute') {
+    referenceAngle = 0;
+  }
+}
+
+function addCalibrationButton() {
+  // Check if button already exists
+  if (document.getElementById('calibrateButton')) return;
+  
+  const calibrateButton = document.createElement('button');
+  calibrateButton.id = 'calibrateButton';
+  calibrateButton.textContent = 'Calibrate Direction';
+  calibrateButton.style.position = 'fixed';
+  calibrateButton.style.top = '60px';
+  calibrateButton.style.right = '10px';
+  calibrateButton.style.padding = '8px 12px';
+  calibrateButton.style.backgroundColor = 'rgba(255, 165, 0, 0.7)';
+  calibrateButton.style.color = 'white';
+  calibrateButton.style.border = 'none';
+  calibrateButton.style.borderRadius = '5px';
+  calibrateButton.style.zIndex = '1000';
+  
+  calibrateButton.addEventListener('click', function() {
+    if (!isCalibrating) {
+      // Start calibration
+      isCalibrating = true;
+      calibrationStartGamma = currentOrientation.gamma || 0;
+      calibrationStartAlpha = currentOrientation.alpha || 0;
+      this.textContent = 'Point & Confirm';
+      this.style.backgroundColor = 'rgba(255, 0, 0, 0.7)';
+      
+      if (statusDisplay) {
+        statusDisplay.textContent = 'Point phone forward and tap button';
+      }
+    } else {
+      // Finish calibration
+      isCalibrating = false;
+      const currentGamma = currentOrientation.gamma || 0;
+      const currentAlpha = currentOrientation.alpha || 0;
+      
+      // Calculate angle change
+      const deltaGamma = currentGamma - calibrationStartGamma;
+      const deltaAlpha = currentAlpha - calibrationStartAlpha;
+      
+      // Set reference angle based on changes
+      if (Math.abs(deltaAlpha) > 5) {
+        referenceAngle = currentAlpha;
+      } else {
+        referenceAngle = 0;
+      }
+      
+      this.textContent = 'Calibrate Direction';
+      this.style.backgroundColor = 'rgba(255, 165, 0, 0.7)';
+      
+      if (statusDisplay) {
+        statusDisplay.textContent = 'Calibration complete';
+      }
+    }
+  });
+  
+  document.body.appendChild(calibrateButton);
+}
+
+
 // Handle orientation event
 function handleOrientation(event) {
   const timestamp = Date.now();
   
-  // Check if we're getting real values
-  if (event.beta !== null && event.gamma !== null) {
-    currentOrientation.beta = event.beta;   // Forward/back tilt (degrees)
-    currentOrientation.gamma = event.gamma; // Left/right tilt (degrees)
-    debug(`Orientation: beta=${currentOrientation.beta.toFixed(2)}, gamma=${currentOrientation.gamma.toFixed(2)}`);
-    
-    // If putting, record orientation with timestamp
-    if (isPutting) {
-      if (timestamp - lastOrientationTime > 50) {
-        orientationHistory.push({
-          beta: currentOrientation.beta,
-          gamma: currentOrientation.gamma,
-          timestamp: timestamp
-        });
-        lastOrientationTime = timestamp;
-      }
+  // Check if we're getting real values and store all orientation values
+  if (event.beta !== null) {
+    currentOrientation.beta = event.beta;     // Forward/back tilt (degrees)
+  }
+  if (event.gamma !== null) {
+    currentOrientation.gamma = event.gamma;   // Left/right tilt (degrees)
+  }
+  if (event.alpha !== null) {
+    currentOrientation.alpha = event.alpha;   // Compass direction (degrees)
+  }
+  
+  // Debug output
+  debug(`Orientation: alpha=${currentOrientation.alpha?.toFixed(2)}, beta=${currentOrientation.beta?.toFixed(2)}, gamma=${currentOrientation.gamma?.toFixed(2)}`);
+  
+  // If putting, record orientation with timestamp
+  if (isPutting) {
+    if (timestamp - lastOrientationTime > 50) {
+      orientationHistory.push({
+        alpha: currentOrientation.alpha,
+        beta: currentOrientation.beta,
+        gamma: currentOrientation.gamma,
+        timestamp: timestamp
+      });
+      lastOrientationTime = timestamp;
     }
   }
 }
