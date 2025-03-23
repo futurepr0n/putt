@@ -9,8 +9,8 @@ if (!roomId) {
 // Scene setup
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-camera.position.set(0, 5, -5);
-camera.lookAt(0, 0, 0);
+camera.position.set(0, 5, -7);
+camera.lookAt(0, 0, 2);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -246,48 +246,58 @@ function createHole(x, z) {
 
 // Create tee marker
 function createTeeMarker(x, z) {
-  const teeGeometry = new THREE.CylinderGeometry(0.1, 0.1, 0.05, 16);
-  const teeMaterial = new THREE.MeshStandardMaterial({ color: 0xFFFFFF });
-  const teeMesh = new THREE.Mesh(teeGeometry, teeMaterial);
-  teeMesh.position.set(x, 0.03, z);
-  teeMesh.receiveShadow = true;
-  scene.add(teeMesh);
-  
-  window.teePosition = { x, z };
-}
+    const teeGeometry = new THREE.CylinderGeometry(0.1, 0.1, 0.05, 16);
+    const teeMaterial = new THREE.MeshStandardMaterial({ color: 0xFFFFFF });
+    const teeMesh = new THREE.Mesh(teeGeometry, teeMaterial);
+    teeMesh.position.set(x, 0.03, z);
+    teeMesh.receiveShadow = true;
+    scene.add(teeMesh);
+    
+    console.log("Created tee marker at position:", {x, z});
+    
+    window.teePosition = { x, z };
+  }
 
 // Create ball
+// Modify the createBall function to ensure the ball is visible
 function createBall(x, y, z) {
-  // Visual representation
-  const ballRadius = 0.05;
-  const ballGeometry = new THREE.SphereGeometry(ballRadius, 32, 32);
-  const ballMaterial = new THREE.MeshStandardMaterial({ color: 0xFFFFFF });
-  const ballMesh = new THREE.Mesh(ballGeometry, ballMaterial);
-  ballMesh.castShadow = true;
-  ballMesh.receiveShadow = true;
-  scene.add(ballMesh);
-  
-  // Physics body
-  const ballBody = new CANNON.Body({ 
-    mass: 0.045, // Golf ball is about 45 grams
-    linearDamping: 0.5, // More damping for grass
-    angularDamping: 0.5 // More rotational damping
-  });
-  ballBody.addShape(new CANNON.Sphere(ballRadius));
-  ballBody.position.set(x, y, z);
-  world.addBody(ballBody);
-  
-  // Material for ball physics
-  ballBody.material = new CANNON.Material({
-    friction: 0.2,
-    restitution: 0.7
-  });
-  
-  // Store references to the ball objects
-  window.ballMesh = ballMesh;
-  window.ballBody = ballBody;
-  window.ballRadius = ballRadius;
-}
+    // Visual representation
+    const ballRadius = 0.05;
+    const ballGeometry = new THREE.SphereGeometry(ballRadius, 32, 32);
+    const ballMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0xFFFFFF,
+      emissive: 0x222222,  // Add slight emissive to make ball more visible
+      roughness: 0.2       // Make it slightly shiny
+    });
+    const ballMesh = new THREE.Mesh(ballGeometry, ballMaterial);
+    ballMesh.castShadow = true;
+    ballMesh.receiveShadow = true;
+    scene.add(ballMesh);
+    
+    console.log("Creating ball at position:", {x, y, z});
+    
+    // Physics body
+    const ballBody = new CANNON.Body({ 
+      mass: 0.045, // Golf ball is about 45 grams
+      linearDamping: 0.5, // More damping for grass
+      angularDamping: 0.5, // More rotational damping
+      allowSleep: false    // Prevent the ball from sleeping (important!)
+    });
+    ballBody.addShape(new CANNON.Sphere(ballRadius));
+    ballBody.position.set(x, y, z);
+    world.addBody(ballBody);
+    
+    // Material for ball physics
+    ballBody.material = new CANNON.Material({
+      friction: 0.2,
+      restitution: 0.7
+    });
+    
+    // Store references to the ball objects
+    window.ballMesh = ballMesh;
+    window.ballBody = ballBody;
+    window.ballRadius = ballRadius;
+  }
 
 // Create boundaries for the course
 function createBoundaries(courseSize) {
@@ -838,6 +848,12 @@ function showGameComplete() {
       return;
     }
     
+    // Make sure the ball exists
+    if (!window.ballBody) {
+      console.error("Ball doesn't exist yet!");
+      return;
+    }
+    
     // Convert device motion to appropriate putting force
     const velocityMagnitude = Math.sqrt(
       velocityDevice.x * velocityDevice.x + 
@@ -846,41 +862,57 @@ function showGameComplete() {
     );
     
     // Scale factor should be lower for putting (more controlled)
-    let scaleFactor = 0.3;
+    let scaleFactor = 0.5; // Increased from 0.3 to make ball move more visibly
     if (velocityMagnitude > 20) {
-      scaleFactor = 0.2;
+      scaleFactor = 0.4; // Increased from 0.2
     } else if (velocityMagnitude < 10) {
-      scaleFactor = 0.4;
+      scaleFactor = 0.6; // Increased from 0.4
     }
     
     // For putting, we want motion mostly along the ground
     // We'll project most of the force forward and some to the sides
     const vGame = new CANNON.Vec3(
-      velocityDevice.x * scaleFactor * 0.5,  // Less side-to-side movement
-      0.1, // Small amount of upward motion
-      velocityDevice.z * scaleFactor  // Forward motion (main direction)
+      velocityDevice.x * scaleFactor * 0.5,  // Side-to-side movement
+      Math.max(0.2, velocityDevice.y * 0.2), // Slightly more upward motion for visibility
+      velocityDevice.z * scaleFactor         // Forward motion (main direction)
     );
     
-    // Apply the velocity to the ball
-    window.ballBody.velocity.set(vGame.x, vGame.y, vGame.z);
+    console.log("Before applying velocity - Ball position:", window.ballBody.position);
     
-    // Add slight random spin for realism
-    window.ballBody.angularVelocity.set(
-      (Math.random() - 0.5) * 2,
-      (Math.random() - 0.5) * 2,
-      (Math.random() - 0.5) * 2
-    );
+    // Reset ball velocity first to ensure clean application
+    window.ballBody.velocity.set(0, 0, 0);
+    window.ballBody.angularVelocity.set(0, 0, 0);
     
-    // Visual feedback
-    puttFeedback.textContent = `Putt power: ${Math.round(velocityMagnitude)}`;
-    
-    // Update ball state and stroke count
-    ballInMotion = true;
-    lastPuttTime = Date.now();
-    strokeCount++;
-    updateStrokeDisplay();
-    
-    console.log('Applied putt velocity:', vGame);
+    // Apply the velocity with a slight delay to ensure physics reset
+    setTimeout(() => {
+      // Apply the velocity to the ball with a clear impulse
+      window.ballBody.applyImpulse(
+        new CANNON.Vec3(vGame.x, vGame.y, vGame.z),
+        window.ballBody.position
+      );
+      
+      // Also set the velocity directly as a backup
+      window.ballBody.velocity.set(vGame.x, vGame.y, vGame.z);
+      
+      // Add slightly more spin for realism and visibility
+      window.ballBody.angularVelocity.set(
+        (Math.random() - 0.5) * 5,
+        (Math.random() - 0.5) * 5,
+        (Math.random() - 0.5) * 5
+      );
+      
+      console.log("Applied velocity:", vGame);
+      console.log("Ball velocity after application:", window.ballBody.velocity);
+      
+      // Visual feedback
+      puttFeedback.textContent = `Putt power: ${Math.round(velocityMagnitude)}`;
+      
+      // Update ball state and stroke count
+      ballInMotion = true;
+      lastPuttTime = Date.now();
+      strokeCount++;
+      updateStrokeDisplay();
+    }, 50);
   }
   
   // Animation loop
