@@ -305,6 +305,9 @@ function createCourse(courseNumber) {
 
     // Create direction indicator
     createDirectionIndicator();
+    
+    // Make sure camera info is displayed
+    addCameraInfo();
 }
 
 // Simplified Perlin Noise function for terrain generation
@@ -473,7 +476,7 @@ function createTeeMarker(x, z) {
     scene.add(teeAreaMesh);
     
     window.teePosition = { x, z };
-}
+  }
 
 // Create ball with improved physics for a golf ball
 function createBall(x, y, z) {
@@ -527,8 +530,14 @@ function createBall(x, y, z) {
   });
   
   ballBody.addShape(new CANNON.Sphere(ballRadius));
-  ballBody.position.set(x, y + 0.5, z); // Raise position to prevent ground clipping
+  
+  // IMPORTANT: Position the ball higher above the ground
+  ballBody.position.set(x, y + 1.0, z); // Increased from 0.5 to 1.0
+  
   world.addBody(ballBody);
+  
+  // Position the visual mesh to match the physics body
+  ballMesh.position.copy(ballBody.position);
   
   // Create specific ground contact material with better parameters
   const groundMaterial = new CANNON.Material('groundMaterial');
@@ -1118,6 +1127,12 @@ function createDirectionIndicator() {
 
 // Add better camera info display
 function addCameraInfo() {
+  // Remove any existing camera info
+  const existingInfo = document.getElementById('cameraInfo');
+  if (existingInfo && existingInfo.parentNode) {
+    existingInfo.parentNode.removeChild(existingInfo);
+  }
+
   const cameraInfo = document.createElement('div');
   cameraInfo.id = 'cameraInfo';
   cameraInfo.style.position = 'absolute';
@@ -1139,18 +1154,51 @@ function addCameraInfo() {
   
   document.body.appendChild(cameraInfo);
   
-  // Fade out after 10 seconds
+  // Keep the info visible for 30 seconds before fading (up from 10)
   setTimeout(() => {
     cameraInfo.style.opacity = '0';
-    cameraInfo.style.transition = 'opacity 1s';
+    cameraInfo.style.transition = 'opacity 2s';
     
     // Remove after fade
     setTimeout(() => {
       if (cameraInfo.parentNode) {
         cameraInfo.parentNode.removeChild(cameraInfo);
       }
-    }, 1000);
-  }, 10000);
+    }, 2000);
+  }, 30000);
+  
+  // Also add a permanent camera help button
+  addCameraHelpButton();
+}
+
+// Add a permanent help button for camera controls
+function addCameraHelpButton() {
+  // Check if button already exists
+  if (document.getElementById('cameraHelpButton')) return;
+  
+  const helpButton = document.createElement('button');
+  helpButton.id = 'cameraHelpButton';
+  helpButton.textContent = '?';
+  helpButton.style.position = 'absolute';
+  helpButton.style.bottom = '10px';
+  helpButton.style.right = '10px';
+  helpButton.style.width = '30px';
+  helpButton.style.height = '30px';
+  helpButton.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+  helpButton.style.color = 'white';
+  helpButton.style.border = 'none';
+  helpButton.style.borderRadius = '50%';
+  helpButton.style.fontSize = '16px';
+  helpButton.style.fontWeight = 'bold';
+  helpButton.style.cursor = 'pointer';
+  helpButton.style.zIndex = '1000';
+  
+  helpButton.addEventListener('click', function() {
+    // Show camera info when help button is clicked
+    addCameraInfo();
+  });
+  
+  document.body.appendChild(helpButton);
 }
 
 // Update camera in the animation loop
@@ -1236,7 +1284,8 @@ const resetDelay = 8000; // 8 seconds before ball auto-resets if stuck
 // Function to reset the ball to the tee
 function resetBall() {
   ballInMotion = false;
-  window.ballBody.position.set(window.teePosition.x, 0.5, window.teePosition.z);
+  // Position the ball higher above the tee
+  window.ballBody.position.set(window.teePosition.x, 1.0, window.teePosition.z); // Increased from 0.5 to 1.0
   window.ballBody.velocity.set(0, 0, 0);
   window.ballBody.angularVelocity.set(0, 0, 0);
   puttFeedback.textContent = 'Ball reset. Ready for next shot';
