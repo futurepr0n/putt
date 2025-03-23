@@ -799,46 +799,88 @@ function addObstacles(courseNumber, courseSize) {
   }
 }
 
+function isInSandTrap(ballBody, sandX, sandZ, sandSize) {
+    const pos = ballBody.position;
+    const dx = pos.x - sandX;
+    const dz = pos.z - sandZ;
+    const distanceSquared = dx * dx + dz * dz;
+    
+    // Check if ball's center is within the sand trap radius
+    return distanceSquared < sandSize * sandSize;
+  }
+  
+  // Apply drag force to ball when in sand trap
+  function applyDragForce(ballBody) {
+    const velocity = ballBody.velocity;
+    const speed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+    
+    if (speed > 0.1) {
+      // Calculate drag force (opposite to velocity direction)
+      const dragFactor = 0.15; // Adjust as needed
+      const dragForce = new CANNON.Vec3(
+        -velocity.x * dragFactor,
+        0, // No vertical drag
+        -velocity.z * dragFactor
+      );
+      
+      // Apply the drag force at the center of the ball
+      ballBody.applyForce(dragForce, ballBody.position);
+    }
+  }
+
 // Create a sand trap
 function createSandTrap(x, z, size) {
-  // Visual
-  const sandGeometry = new THREE.CylinderGeometry(size, size, 0.05, 32);
-  const sandMesh = new THREE.Mesh(sandGeometry, sandMaterial);
-  sandMesh.position.set(x, 0.025, z);
-  sandMesh.receiveShadow = true;
-  scene.add(sandMesh);
-  
-  // Create a physics material for the sand (Define it here instead of reusing a variable)
-  const sandPhysicsMaterial = new CANNON.Material({
-    friction: 0.9, // High friction to slow ball
-    restitution: 0.1 // Low bounce
-  });
-  
-  // Create a trigger for the sand trap
-  const sandBody = new CANNON.Body({
-    mass: 0
-  });
-  
-  // Use a cylinder shape
-  const sandShape = new CANNON.Cylinder(size, size, 0.1, 16);
-  sandBody.addShape(sandShape);
-  sandBody.position.set(x, 0.05, z);
-  sandBody.material = sandPhysicsMaterial;
-  world.addBody(sandBody);
-  
-  // Create contact material between ball and sand
-  if (window.ballBody && window.ballBody.material) {
-    const ballSandContactMaterial = new CANNON.ContactMaterial(
-      window.ballBody.material,
-      sandPhysicsMaterial,
-      {
-        friction: 0.9,
-        restitution: 0.1
+    // Visual representation - keep this the same
+    const sandGeometry = new THREE.CylinderGeometry(size, size, 0.05, 32);
+    const sandMesh = new THREE.Mesh(sandGeometry, sandMaterial);
+    sandMesh.position.set(x, 0.025, z);
+    sandMesh.receiveShadow = true;
+    scene.add(sandMesh);
+    
+    // Create a physics material for the sand
+    const sandPhysicsMaterial = new CANNON.Material('sandMaterial');
+    
+    // CHANGE: Instead of a solid cylinder, create a trigger zone
+    const sandBody = new CANNON.Body({
+      mass: 0,
+      collisionResponse: true, // Allow collision response
+      type: CANNON.Body.STATIC,
+      material: sandPhysicsMaterial
+    });
+    
+    // Use a cylinder shape but with very small height to act as a zone
+    const sandShape = new CANNON.Cylinder(size, size, 0.01, 16);
+    sandBody.addShape(sandShape);
+    sandBody.position.set(x, 0.005, z); // Place it just above ground level
+    
+    // Add to physics world
+    world.addBody(sandBody);
+    
+    // Mark this body as a sand trap for collision detection
+    sandBody.isSandTrap = true;
+    
+    // Create contact material between ball and sand with high friction but allowing passage
+    if (window.ballBody && window.ballBody.material) {
+      const ballSandContactMaterial = new CANNON.ContactMaterial(
+        window.ballBody.material,
+        sandPhysicsMaterial,
+        {
+          friction: 0.9,       // High friction to slow the ball
+          restitution: 0.1,    // Low bounce
+          contactEquationStiffness: 1e6,  // Lower stiffness than normal ground
+          contactEquationRelaxation: 5    // More relaxation for smoother interaction
+        }
+      );
+      world.addContactMaterial(ballSandContactMaterial);
+    }
+    
+    // Add event listener to apply drag force to ball when in sand trap
+    world.addEventListener('postStep', function() {
+      if (window.ballBody && isInSandTrap(window.ballBody, x, z, size)) {
+        applyDragForce(window.ballBody);
       }
-    );
-    world.addContactMaterial(ballSandContactMaterial);
+    });
   }
-}
 
 // Create a hill obstacle
 function createHill(x, z, height) {
