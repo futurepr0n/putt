@@ -40,6 +40,47 @@ let lastOrientationTime = 0;
 let sendingOrientation = false;
 const orientationInterval = 100; // ms between orientation updates
 
+
+function addAbsoluteModeToggle() {
+  // Check if button already exists
+  if (document.getElementById('absoluteModeToggle')) return;
+  
+  const toggleButton = document.createElement('button');
+  toggleButton.id = 'absoluteModeToggle';
+  toggleButton.textContent = '360° Aiming: OFF';
+  toggleButton.style.position = 'fixed';
+  toggleButton.style.top = '10px';
+  toggleButton.style.right = '10px';
+  toggleButton.style.padding = '8px 12px';
+  toggleButton.style.backgroundColor = 'rgba(0, 0, 255, 0.7)';
+  toggleButton.style.color = 'white';
+  toggleButton.style.border = 'none';
+  toggleButton.style.borderRadius = '5px';
+  toggleButton.style.zIndex = '1000';
+  
+  window.useAbsoluteMode = false;
+  
+  toggleButton.addEventListener('click', function() {
+    window.useAbsoluteMode = !window.useAbsoluteMode;
+    this.textContent = `360° Aiming: ${window.useAbsoluteMode ? 'ON' : 'OFF'}`;
+    this.style.backgroundColor = window.useAbsoluteMode ? 'rgba(0, 128, 0, 0.7)' : 'rgba(0, 0, 255, 0.7)';
+    
+    if (statusDisplay) {
+      statusDisplay.textContent = `Direction mode: ${window.useAbsoluteMode ? '360° aiming' : 'Relative to phone'}`;
+    }
+  });
+  
+  document.body.appendChild(toggleButton);
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  // Initialize orientation object with all properties
+  currentOrientation = { alpha: 0, beta: 0, gamma: 0 };
+  
+  // Add the mode toggle button
+  addAbsoluteModeToggle();
+});
+
 function startSendingOrientation() {
   if (sendingOrientation) return;
   sendingOrientation = true;
@@ -58,56 +99,76 @@ function stopSendingOrientation() {
     window.orientationUpdateInterval = null;
   }
 }
-
 function sendOrientationData() {
   if (!socket.connected) return;
   
-  let direction = { x: 0, y: 0, z: 0 };
+  let direction;
   
-  // Get orientation data
-  const beta = currentOrientation.beta || 0;
-  const gamma = currentOrientation.gamma || 0;
-  const alpha = currentOrientation.alpha || 0;
-  
-  if (directionMode === 'relative') {
-    // Original relative mode using only gamma
-    const normalizedBeta = (beta - 45) / 45; // Center around 45 degrees
-    const normalizedGamma = gamma / 45;      // Normalize to range of -1 to 1
+  if (window.useAbsoluteMode && currentOrientation.alpha !== undefined) {
+    // In absolute mode, use alpha (compass direction) for 360° control
+    // Get alpha angle (0-360)
+    let angle = currentOrientation.alpha;
     
-    // Calculate direction components with moderate sensitivity
+    // Convert to radians
+    let angleRad = angle * (Math.PI / 180);
+    
+    // Get power from beta tilt - centered around 45 degrees
+    const betaAngle = currentOrientation.beta || 45;
+    const tiltPower = Math.abs(betaAngle - 45) / 45;
+    const power = 10 + tiltPower * 5; // 10-15 range
+    
+    // Use polar coordinates for direction
+    direction = {
+      x: Math.sin(angleRad) * power,
+      y: 0.1 * power,
+      z: Math.cos(angleRad) * power
+    };
+  } else {
+    // Regular mode - use gamma for direction
+    const gamma = currentOrientation.gamma || 0;
+    const beta = currentOrientation.beta || 45;
+    
+    // Basic direction calculation
     direction = {
       x: -Math.sin(gamma * (Math.PI / 180)) * 15,
       y: Math.sin(beta * (Math.PI / 180)) * 5,
       z: Math.cos(gamma * (Math.PI / 180)) * 15
     };
-  } else {
-    // Absolute mode using alpha (compass) for 360-degree control
-    // Calculate angle relative to reference
-    let angle = ((alpha - referenceAngle) + 360) % 360;
-    // Convert to radians
-    let angleRad = angle * (Math.PI / 180);
-    
-    // Use beta for power/intensity
-    const betaFactor = Math.max(0, (beta - 30) / 60); // 0 to 1 range, starts at 30 degrees
-    const intensity = Math.min(betaFactor * 20, 15);  // Scale and limit intensity
-    
-    // Calculate direction components using polar coordinates
-    direction = {
-      x: -Math.sin(angleRad) * intensity,
-      y: Math.min(beta / 90, 0.5) * 10,      // Vertical component
-      z: -Math.cos(angleRad) * intensity      // Negative cos for correct direction
-    };
   }
-  
-  // Add a tilt-based power multiplier
-  const tiltFactor = Math.min(Math.abs(beta - 45) / 30, 1.0);
-  const powerMultiplier = 0.5 + tiltFactor;
-  
-  direction.x *= powerMultiplier;
-  direction.z *= powerMultiplier;
   
   // Send the direction data to the server
   socket.emit('orientation', direction);
+}
+
+
+function handleOrientation(event) {
+  const timestamp = Date.now();
+  
+  // Store all orientation values
+  if (event.beta !== null) {
+    currentOrientation.beta = event.beta;
+  }
+  if (event.gamma !== null) {
+    currentOrientation.gamma = event.gamma;
+  }
+  if (event.alpha !== null) {
+    currentOrientation.alpha = event.alpha;
+  }
+  
+  debug(`Orientation: ${currentOrientation.alpha?.toFixed(2)}, ${currentOrientation.beta?.toFixed(2)}, ${currentOrientation.gamma?.toFixed(2)}`);
+  
+  // If putting, record orientation history
+  if (isPutting) {
+    if (timestamp - lastOrientationTime > 50) {
+      orientationHistory.push({
+        alpha: currentOrientation.alpha,
+        beta: currentOrientation.beta,
+        gamma: currentOrientation.gamma,
+        timestamp: timestamp
+      });
+      lastOrientationTime = timestamp;
+    }
+  }
 }
 
 // Add UI components when page loads
@@ -333,37 +394,6 @@ function addCalibrationButton() {
 }
 
 
-// Handle orientation event
-function handleOrientation(event) {
-  const timestamp = Date.now();
-  
-  // Check if we're getting real values and store all orientation values
-  if (event.beta !== null) {
-    currentOrientation.beta = event.beta;     // Forward/back tilt (degrees)
-  }
-  if (event.gamma !== null) {
-    currentOrientation.gamma = event.gamma;   // Left/right tilt (degrees)
-  }
-  if (event.alpha !== null) {
-    currentOrientation.alpha = event.alpha;   // Compass direction (degrees)
-  }
-  
-  // Debug output
-  debug(`Orientation: alpha=${currentOrientation.alpha?.toFixed(2)}, beta=${currentOrientation.beta?.toFixed(2)}, gamma=${currentOrientation.gamma?.toFixed(2)}`);
-  
-  // If putting, record orientation with timestamp
-  if (isPutting) {
-    if (timestamp - lastOrientationTime > 50) {
-      orientationHistory.push({
-        alpha: currentOrientation.alpha,
-        beta: currentOrientation.beta,
-        gamma: currentOrientation.gamma,
-        timestamp: timestamp
-      });
-      lastOrientationTime = timestamp;
-    }
-  }
-}
 
 // Start tracking orientation when permissions are granted
 window.addEventListener('deviceorientation', handleOrientation, true);
