@@ -427,6 +427,7 @@ function addObstacles(courseNumber, courseSize) {
   }
   
   // Add debug visualization of obstacles
+  console.log(`Obstacle ${i}: x=${x}, z=${z}, type=${obstacleType === 0 ? 'sand' : obstacleType === 1 ? 'hill' : 'barrier'}`);
   addObstacleDebugger();
 }
 
