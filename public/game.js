@@ -326,6 +326,9 @@ function addDebugControls() {
   
   document.body.appendChild(pushButton);
 
+  // Add hole debug button
+  addHoleDebugButton();
+
   // Add a toggle button for physics debug
   const debugPhysicsButton = document.createElement('button');
   debugPhysicsButton.id = 'debugPhysicsButton';
@@ -657,24 +660,215 @@ function createHole(x, z) {
   flagMesh.castShadow = true;
   scene.add(flagMesh);
   
-  // Physics trigger for hole
-  const holeBody = new CANNON.Body({
-    mass: 0,
-    collisionResponse: false,
-    isTrigger: true
+  // Add a subtle hole gradient around the hole for visual effect
+  const holeGradientGeometry = new THREE.RingGeometry(holeRadius, holeRadius * 3, 32);
+  const holeGradientMaterial = new THREE.MeshBasicMaterial({
+    color: 0x005500,
+    transparent: true,
+    opacity: 0.3,
+    side: THREE.DoubleSide
   });
+  const holeGradientMesh = new THREE.Mesh(holeGradientGeometry, holeGradientMaterial);
+  holeGradientMesh.rotation.x = -Math.PI / 2;
+  holeGradientMesh.position.set(x, 0.011, z);
+  scene.add(holeGradientMesh);
   
-  // Create a slightly larger cylinder shape for easier detection
-  const holeShape = new CANNON.Cylinder(holeRadius * 1.2, holeRadius * 1.2, holeDepth * 2, 8);
-  holeBody.addShape(holeShape);
-  holeBody.position.set(x, 0, z);
-  world.addBody(holeBody);
+  // Create a invisible attraction zone around the hole
+  // This will help guide the ball in when it's close
+  const attractionRadius = holeRadius * 4; // Larger radius for attraction
+  const attractionGeometry = new THREE.SphereGeometry(attractionRadius, 16, 8);
+  const attractionMaterial = new THREE.MeshBasicMaterial({
+    color: 0x00FF00,
+    transparent: true,
+    opacity: 0.0,
+    wireframe: true
+  });
+  const attractionMesh = new THREE.Mesh(attractionGeometry, attractionMaterial);
+  attractionMesh.position.set(x, 0, z);
+  scene.add(attractionMesh);
   
   // Store references for collision detection
   window.holeMesh = holeMesh;
-  window.holeBody = holeBody;
+  window.holeRadius = holeRadius;
+  window.attractionMesh = attractionMesh;
+  window.attractionRadius = attractionRadius;
   window.holeCenterX = x;
   window.holeCenterZ = z;
+  window.holeInProgress = false;
+}
+
+// Enhanced ball-in-hole detection and animation
+function checkBallInHole() {
+  if (courseCompleted || !window.ballBody || window.holeCenterX === undefined || window.holeCenterZ === undefined) return;
+  
+  // If hole animation is already in progress, don't check again
+  if (window.holeInProgress) return;
+  
+  const ballPos = window.ballBody.position;
+  const holeX = window.holeCenterX;
+  const holeZ = window.holeCenterZ;
+  
+  // Calculate distance from ball to hole center (horizontal only)
+  const dx = ballPos.x - holeX;
+  const dz = ballPos.z - holeZ;
+  const distanceSquared = dx*dx + dz*dz;
+  const distance = Math.sqrt(distanceSquared);
+  
+  // Check ball speed
+  const velocity = window.ballBody.velocity;
+  const horizontalSpeed = Math.sqrt(velocity.x*velocity.x + velocity.z*velocity.z);
+  
+  // Apply gentle attraction when ball is near the hole to help it in
+  // Only if the ball is moving slow enough
+  if (distance < window.attractionRadius && horizontalSpeed < 2.0 && ballPos.y < 0.3) {
+    // Apply a gentle force toward the hole
+    const attractionStrength = 0.05 * (1 - distance / window.attractionRadius);
+    const forceX = -dx * attractionStrength;
+    const forceZ = -dz * attractionStrength;
+    
+    // Apply the attractive force to the ball
+    window.ballBody.applyForce(
+      new CANNON.Vec3(forceX, 0, forceZ),
+      window.ballBody.position
+    );
+    
+    // Add a subtle damping effect when near the hole to slow the ball
+    if (distance < window.attractionRadius / 2) {
+      window.ballBody.velocity.x *= 0.98;
+      window.ballBody.velocity.z *= 0.98;
+    }
+    
+    // Visual debug - make attraction zone visible when ball is inside
+    if (window.showPhysicsDebug && window.attractionMesh) {
+      window.attractionMesh.material.opacity = 0.1;
+    }
+  } else if (window.attractionMesh) {
+    // Hide attraction zone when ball is outside
+    window.attractionMesh.material.opacity = 0;
+  }
+  
+  // Ball is in hole if it's close enough to the center and moving slowly
+  if (distance < window.holeRadius * 1.2 && horizontalSpeed < 0.8 && ballPos.y < 0.15) {
+    startHoleAnimation();
+  }
+}
+
+// Animate the ball dropping into the hole
+function startHoleAnimation() {
+  if (window.holeInProgress) return;
+  window.holeInProgress = true;
+  
+  console.log("Ball in hole! Starting animation");
+  
+  // Disable physics while animation is happening
+  window.ballBody.type = CANNON.Body.KINEMATIC;
+  window.ballBody.velocity.set(0, 0, 0);
+  window.ballBody.angularVelocity.set(0, 0, 0);
+  
+  // Get starting position
+  const startPos = window.ballBody.position.clone();
+  const targetY = -0.3; // Target y position (below ground)
+  const duration = 1000; // Animation duration in ms
+  const startTime = Date.now();
+  
+  // Create a satisfying "ball falling in hole" sound
+  playSinkSound();
+  
+  // Animation function
+  function animateBallSink() {
+    const elapsed = Date.now() - startTime;
+    const progress = Math.min(elapsed / duration, 1);
+    
+    // Ease-in function for natural motion
+    const easedProgress = progress * progress;
+    
+    // Drop and shrink the ball
+    if (window.ballBody) {
+      // Move down
+      window.ballBody.position.y = startPos.y - easedProgress * (startPos.y - targetY);
+      
+      // Shrink ball mesh slightly as it "disappears" into the hole
+      if (window.ballMesh) {
+        const scale = 1 - easedProgress * 0.3;
+        window.ballMesh.scale.set(scale, scale, scale);
+      }
+      
+      // Rotate slightly during drop
+      window.ballBody.quaternion.setFromAxisAngle(
+        new CANNON.Vec3(1, 0, 0), 
+        progress * Math.PI / 2
+      );
+    }
+    
+    if (progress < 1) {
+      requestAnimationFrame(animateBallSink);
+    } else {
+      // Animation complete - finish the hole
+      setTimeout(() => holeComplete(), 500);
+    }
+  }
+  
+  // Start the animation
+  animateBallSink();
+}
+
+// Play a satisfying sound when the ball drops in the hole
+function playSinkSound() {
+  // Create an audio context
+  const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  
+  // Create oscillator for the "plop" sound
+  const osc = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+  
+  // Connect everything
+  osc.connect(gain);
+  gain.connect(audioContext.destination);
+  
+  // Set properties
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(300, audioContext.currentTime);
+  osc.frequency.exponentialRampToValueAtTime(150, audioContext.currentTime + 0.3);
+  
+  gain.gain.setValueAtTime(0, audioContext.currentTime);
+  gain.gain.linearRampToValueAtTime(0.3, audioContext.currentTime + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.5);
+  
+  // Play the sound
+  osc.start();
+  osc.stop(audioContext.currentTime + 0.5);
+}
+
+// Debug button to show hole physics
+function addHoleDebugButton() {
+  // Skip if already exists
+  if (document.getElementById('holeDebugButton')) return;
+  
+  const button = document.createElement('button');
+  button.id = 'holeDebugButton';
+  button.textContent = 'Test Hole Drop';
+  button.style.position = 'absolute';
+  button.style.bottom = '280px';
+  button.style.left = '20px';
+  button.style.padding = '8px 12px';
+  button.style.backgroundColor = 'rgba(255, 165, 0, 0.7)';
+  button.style.color = 'white';
+  button.style.border = 'none';
+  button.style.borderRadius = '5px';
+  button.style.cursor = 'pointer';
+  button.style.zIndex = '1000';
+  
+  button.addEventListener('click', function() {
+    if (window.ballBody && window.holeCenterX !== undefined && window.holeCenterZ !== undefined) {
+      // Move the ball right to the hole for testing
+      window.ballBody.position.set(window.holeCenterX, 0.1, window.holeCenterZ);
+      window.ballBody.velocity.set(0, 0, 0);
+      window.ballBody.angularVelocity.set(0, 0, 0);
+      window.ballBody.wakeUp();
+    }
+  });
+  
+  document.body.appendChild(button);
 }
 
 // Create tee marker
@@ -1397,27 +1591,6 @@ function showHoleComplete(strokesTaken, parValue) {
   }, 3000);
 }
 
-// Check if ball is in hole
-function checkBallInHole() {
-  if (courseCompleted || !window.ballBody || window.holeCenterX === undefined || window.holeCenterZ === undefined) return;
-  
-  const ballPos = window.ballBody.position;
-  const holeX = window.holeCenterX;
-  const holeZ = window.holeCenterZ;
-  
-  // Calculate distance from ball to hole center
-  const dx = ballPos.x - holeX;
-  const dz = ballPos.z - holeZ;
-  const distance = Math.sqrt(dx*dx + dz*dz);
-  
-  // Check if ball is close enough to hole center and moving slowly
-  const velocity = window.ballBody.velocity;
-  const speed = Math.sqrt(velocity.x*velocity.x + velocity.y*velocity.y + velocity.z*velocity.z);
-  
-  if (distance < 0.15 && ballPos.y < 0.1 && speed < 0.5) {
-    holeComplete();
-  }
-}
 
 // Handle hole completion
 function holeComplete() {
