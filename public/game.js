@@ -84,20 +84,20 @@ const poleMatrial = new THREE.MeshStandardMaterial({ color: 0xCCCCCC });
 
 // Golf-specific physics settings for more realistic putting
 function improvePhysicsSettings() {
-  // Reduce gravity slightly for golf to prevent too fast rolling on slopes
-  world.gravity.set(0, -9.0, 0); // Reduced from -9.82
+  // Use standard gravity for better behavior
+  world.gravity.set(0, -9.8, 0);
   
-  // Increase solver iterations for more stable and accurate physics
-  world.solver.iterations = 25; // Increased from 20
+  // Increase solver iterations for more stable physics
+  world.solver.iterations = 10;
   
   // Adjust default contact material for better ball-green interaction
-  world.defaultContactMaterial.friction = 0.4;       // Increased from 0.3
-  world.defaultContactMaterial.restitution = 0.2;    // Reduced from 0.4
-  world.defaultContactMaterial.contactEquationStiffness = 1e8;
+  world.defaultContactMaterial.friction = 0.3;
+  world.defaultContactMaterial.restitution = 0.3;
+  world.defaultContactMaterial.contactEquationStiffness = 1e7;
   world.defaultContactMaterial.contactEquationRelaxation = 3;
   
-  // Set smaller time step for more accurate physics
-  world.fixedTimeStep = 1/120;
+  // Set time step for physics
+  world.fixedTimeStep = 1/60;
 }
 
 // Create a button to toggle "follow ball" mode
@@ -210,106 +210,192 @@ function addCameraPresets() {
 
 // Create a course with terrain features
 function createCourse(courseNumber) {
-    // Clear existing course
-    clearCourse();
+  // Clear existing course
+  clearCourse();
+  
+  // Reset course state
+  courseCompleted = false;
+  strokeCount = 0;
+  
+  // Set par based on course difficulty
+  par = 2 + Math.floor(courseNumber / 2);
+  
+  // Apply golf-specific physics settings
+  improvePhysicsSettings();
+  
+  // Create the base green - USING A SIMPLE FLAT PLANE INSTEAD OF TERRAIN
+  const courseSize = { width: 8, length: 16 };
+  const groundGeometry = new THREE.PlaneGeometry(courseSize.width, courseSize.length);
+  const groundMesh = new THREE.Mesh(groundGeometry, greenMaterial);
+  groundMesh.rotation.x = -Math.PI / 2;
+  groundMesh.receiveShadow = true;
+  scene.add(groundMesh);
+  
+  // Create a simple flat ground for physics (instead of heightfield)
+  const groundBody = new CANNON.Body({ mass: 0 });
+  const groundShape = new CANNON.Plane();
+  groundBody.addShape(groundShape);
+  groundBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
+  groundBody.material = new CANNON.Material('groundMaterial');
+  world.addBody(groundBody);
+  
+  // Add the hole (cup)
+  createHole(0, courseSize.length/2 - 2);
+  
+  // Add tee marker
+  createTeeMarker(0, -courseSize.length/2 + 3);
+  
+  // Add boundaries with reduced height
+  createSimpleBoundaries(courseSize);
+  
+  // Create safety floors under the course
+  createSafetyFloor(courseSize);
+  
+  // Create ball at the tee position
+  createBall(0, 0.5, -courseSize.length/2 + 3);
+  
+  // Set up contact detection after ball creation
+  setupContactDetection();
+  
+  // Add obstacles based on course number (simplified)
+  addSimpleObstacles(courseNumber, courseSize);
+  
+  // Update stroke counter display
+  updateStrokeDisplay();
+  
+  // Update the course info
+  updateCourseInfo(courseNumber + 1, totalCourses, par);
+
+  // Create direction indicator
+  createDirectionIndicator();
+  
+  // Make sure camera info is displayed
+  addCameraInfo();
+  
+  // Add debug controls for testing
+  addDebugControls();
+}
+
+
+function addDebugControls() {
+  // Check if button already exists
+  if (document.getElementById('resetBallButton')) return;
+  
+  const resetButton = document.createElement('button');
+  resetButton.id = 'resetBallButton';
+  resetButton.textContent = 'Reset Ball';
+  resetButton.style.position = 'absolute';
+  resetButton.style.bottom = '160px';
+  resetButton.style.left = '20px';
+  resetButton.style.padding = '8px 12px';
+  resetButton.style.backgroundColor = 'rgba(255, 0, 0, 0.7)';
+  resetButton.style.color = 'white';
+  resetButton.style.border = 'none';
+  resetButton.style.borderRadius = '5px';
+  resetButton.style.cursor = 'pointer';
+  resetButton.style.zIndex = '1000';
+  
+  resetButton.addEventListener('click', function() {
+    resetBall();
+  });
+  
+  document.body.appendChild(resetButton);
+  
+  // Add a force push button
+  const pushButton = document.createElement('button');
+  pushButton.id = 'pushBallButton';
+  pushButton.textContent = 'Push Ball Forward';
+  pushButton.style.position = 'absolute';
+  pushButton.style.bottom = '200px';
+  pushButton.style.left = '20px';
+  pushButton.style.padding = '8px 12px';
+  pushButton.style.backgroundColor = 'rgba(0, 128, 0, 0.7)';
+  pushButton.style.color = 'white';
+  pushButton.style.border = 'none';
+  pushButton.style.borderRadius = '5px';
+  pushButton.style.cursor = 'pointer';
+  pushButton.style.zIndex = '1000';
+  
+  pushButton.addEventListener('click', function() {
+    if (window.ballBody) {
+      // Apply a gentle push forward
+      window.ballBody.velocity.set(0, 0.1, 3);
+      ballInMotion = true;
+    }
+  });
+  
+  document.body.appendChild(pushButton);
+
+  // Add a toggle button for physics debug
+  const debugPhysicsButton = document.createElement('button');
+  debugPhysicsButton.id = 'debugPhysicsButton';
+  debugPhysicsButton.textContent = 'Toggle Physics Debug';
+  debugPhysicsButton.style.position = 'absolute';
+  debugPhysicsButton.style.bottom = '240px';
+  debugPhysicsButton.style.left = '20px';
+  debugPhysicsButton.style.padding = '8px 12px';
+  debugPhysicsButton.style.backgroundColor = 'rgba(0, 0, 255, 0.7)';
+  debugPhysicsButton.style.color = 'white';
+  debugPhysicsButton.style.border = 'none';
+  debugPhysicsButton.style.borderRadius = '5px';
+  debugPhysicsButton.style.cursor = 'pointer';
+  debugPhysicsButton.style.zIndex = '1000';
+  
+  // Store debug state
+  window.showPhysicsDebug = false;
+  
+  debugPhysicsButton.addEventListener('click', function() {
+    window.showPhysicsDebug = !window.showPhysicsDebug;
     
-    // Reset course state
-    courseCompleted = false;
-    strokeCount = 0;
-    
-    // Set par based on course difficulty
-    par = 2 + Math.floor(courseNumber / 2);
-    
-    // Apply golf-specific physics settings
-    improvePhysicsSettings();
-    
-    // Create the base green
-    const courseSize = { width: 8, length: 16 };
-    const groundGeometry = new THREE.PlaneGeometry(courseSize.width, courseSize.length, 64, 128);
-    const groundMesh = new THREE.Mesh(groundGeometry, greenMaterial);
-    groundMesh.rotation.x = -Math.PI / 2;
-    groundMesh.receiveShadow = true;
-    scene.add(groundMesh);
-    
-    // Apply random terrain deformations based on course number
-    const terrainComplexity = 0.1 + (courseNumber * 0.05); // Increase complexity with course number
-    const vertices = groundGeometry.attributes.position.array;
-    
-    // Create a different seed for each course
-    const seed = courseNumber * 1000;
-    
-    // Apply terrain deformations
-    for (let i = 0; i < vertices.length; i += 3) {
-      if (i % 3 === 1) { // Only modify y values (height)
-        // Create several noise functions for more varied terrain
-        const noise1 = simplex(vertices[i-1] * 0.1 + seed, vertices[i+1] * 0.1 + seed) * terrainComplexity;
-        const noise2 = simplex(vertices[i-1] * 0.2 + seed + 100, vertices[i+1] * 0.2 + seed + 100) * terrainComplexity * 0.5;
-        
-        // Keep the starting and hole areas flatter
-        const distFromStart = Math.sqrt(Math.pow(vertices[i-1] - 0, 2) + Math.pow(vertices[i+1] - (-courseSize.length/2 + 1), 2));
-        const distFromHole = Math.sqrt(Math.pow(vertices[i-1] - 0, 2) + Math.pow(vertices[i+1] - (courseSize.length/2 - 1), 2));
-        
-        // Apply less deformation near the start and hole
-        let deformation = noise1 + noise2;
-        if (distFromStart < 1.5) {
-          deformation *= distFromStart / 1.5;
-        }
-        if (distFromHole < 1) {
-          deformation *= distFromHole;
-        }
-        
-        vertices[i] = deformation;
-      }
+    // Toggle debug sphere visibility
+    if (window.debugSphere) {
+      window.debugSphere.visible = window.showPhysicsDebug;
     }
     
-    // Update the geometry to reflect the terrain changes
-    groundGeometry.attributes.position.needsUpdate = true;
-    groundGeometry.computeVertexNormals();
-    
-    // Create heightfield shape for physics based on the deformed geometry
-    const heightfieldData = [];
-    const heightfieldShape = createHeightfieldFromGeometry(groundGeometry, courseSize);
-    
-    // Create the physics body for the ground
-    const groundBody = new CANNON.Body({ mass: 0 });
-    groundBody.addShape(heightfieldShape);
-    groundBody.material = new CANNON.Material('groundMaterial');
-    world.addBody(groundBody);
-    
-    // Add the hole (cup)
-    createHole(0, courseSize.length/2 - 2);
-    
-    // Add tee marker
-    createTeeMarker(0, -courseSize.length/2 + 3);
-    
-    // Add boundaries
-    createBoundaries(courseSize);
-    
-    // Create safety floors under the course
-    createSafetyFloor(courseSize);
-    
-    // Create ball at the tee position (IMPORTANT: Create ball before obstacles that need to reference it)
-    createBall(0, 0.5, -courseSize.length/2 + 3);
-    
-    // Set up contact detection after ball creation
-    setupContactDetection();
-    
-    // Add obstacles based on course number (Now the ball exists when this runs)
-    addObstacles(courseNumber, courseSize);
-    
-    // Update stroke counter display
-    updateStrokeDisplay();
-    
-    // Update the course info
-    updateCourseInfo(courseNumber + 1, totalCourses, par);
+    debugPhysicsButton.style.backgroundColor = window.showPhysicsDebug ? 
+      'rgba(0, 255, 0, 0.7)' : 'rgba(0, 0, 255, 0.7)';
+  });
+  
+  document.body.appendChild(debugPhysicsButton);
+}
 
-    // Create direction indicator
-    createDirectionIndicator();
-    
-    // Make sure camera info is displayed
-    addCameraInfo();
 
-    addFlatGround(courseSize);
+
+function createSimpleBoundaries(courseSize) {
+  const boundaryHeight = 0.3;
+  const boundaryThickness = 0.4;
+  
+  // Create a boundary helper function
+  function createBoundary(x, y, z, width, depth) {
+    const boundaryGeom = new THREE.BoxGeometry(width, boundaryHeight, depth);
+    const boundaryMesh = new THREE.Mesh(boundaryGeom, roughMaterial);
+    boundaryMesh.position.set(x, y + boundaryHeight/2, z);
+    boundaryMesh.castShadow = true;
+    boundaryMesh.receiveShadow = true;
+    scene.add(boundaryMesh);
+    
+    // Physics body
+    const boundaryBody = new CANNON.Body({ mass: 0 });
+    boundaryBody.addShape(new CANNON.Box(new CANNON.Vec3(width/2, boundaryHeight/2, depth/2)));
+    boundaryBody.position.set(x, y + boundaryHeight/2, z);
+    world.addBody(boundaryBody);
+  }
+  
+  // Left boundary
+  createBoundary(-courseSize.width/2 - boundaryThickness/2, 0, 0, 
+                boundaryThickness, courseSize.length + boundaryThickness*2);
+  
+  // Right boundary
+  createBoundary(courseSize.width/2 + boundaryThickness/2, 0, 0, 
+                boundaryThickness, courseSize.length + boundaryThickness*2);
+  
+  // Top boundary
+  createBoundary(0, 0, courseSize.length/2 + boundaryThickness/2, 
+                courseSize.width + boundaryThickness*2, boundaryThickness);
+  
+  // Bottom boundary
+  createBoundary(0, 0, -courseSize.length/2 - boundaryThickness/2, 
+                courseSize.width + boundaryThickness*2, boundaryThickness);
 }
 
 function addObstacleDebugger() {
@@ -624,7 +710,7 @@ function createTeeMarker(x, z) {
   }
 
 // Create ball with improved physics for a golf ball
-function createBall(x, y, z) {
+/* function createBall(x, y, z) {
     // Visual representation remains the same
     const ballRadius = 0.08;
     const ballGeometry = new THREE.SphereGeometry(ballRadius, 32, 32);
@@ -709,6 +795,95 @@ function createBall(x, y, z) {
     window.ballRadius = ballRadius;
     
     console.log("Ball created with physics position:", ballBody.position);
+  } */
+
+    function createBall(x, y, z) {
+      const ballRadius = 0.08;
+      const ballGeometry = new THREE.SphereGeometry(ballRadius, 32, 32);
+      
+      const ballMaterial = new THREE.MeshStandardMaterial({ 
+        color: 0xFFFFFF,
+        emissive: 0xAAAAAA,
+        emissiveIntensity: 0.2,
+        roughness: 0.3,
+        metalness: 0.2
+      });
+      
+      const ballMesh = new THREE.Mesh(ballGeometry, ballMaterial);
+      ballMesh.castShadow = true;
+      ballMesh.receiveShadow = true;
+      
+      scene.add(ballMesh);
+      
+      // Physics body with REDUCED damping for better movement
+      const ballBody = new CANNON.Body({ 
+        mass: 0.15,
+        linearDamping: 0.2,  // Reduced from 0.7
+        angularDamping: 0.3, // Reduced from 0.8
+        allowSleep: true,
+        sleepSpeedLimit: 0.05,
+        sleepTimeLimit: 1
+      });
+      
+      ballBody.addShape(new CANNON.Sphere(ballRadius));
+      ballBody.position.set(x, y + 0.5, z);  // Start just above the ground
+      world.addBody(ballBody);
+      
+      // Add debug sphere to visualize physics position
+      const debugGeometry = new THREE.SphereGeometry(0.02, 16, 16);
+      const debugMaterial = new THREE.MeshBasicMaterial({ color: 0xFF0000 });
+      const debugSphere = new THREE.Mesh(debugGeometry, debugMaterial);
+      scene.add(debugSphere);
+      
+      // Store references
+      window.ballMesh = ballMesh;
+      window.ballBody = ballBody;
+      window.ballRadius = ballRadius;
+      window.debugSphere = debugSphere;
+  }
+
+
+  function addSimpleObstacles(courseNumber, courseSize) {
+    const numObstacles = Math.min(courseNumber + 1, 3); // Reduced number of obstacles
+    
+    for (let i = 0; i < numObstacles; i++) {
+      // Position obstacles on sides, away from the center path
+      const x = (Math.random() > 0.5 ? 1 : -1) * (1.5 + Math.random() * 2);
+      const z = -courseSize.length/4 + (Math.random() * courseSize.length/2);
+      
+      // Only use simple barriers
+      createSimpleBarrier(x, z, 0.8);
+    }
+  }
+  
+  // Create a simple barrier
+  function createSimpleBarrier(x, z, width) {
+    const height = 0.2;
+    const depth = 0.1;
+    
+    // Determine orientation
+    const isVertical = Math.random() > 0.5;
+    const barrierGeometry = new THREE.BoxGeometry(
+      isVertical ? depth : width, 
+      height, 
+      isVertical ? width : depth
+    );
+    
+    const barrierMesh = new THREE.Mesh(barrierGeometry, roughMaterial);
+    barrierMesh.position.set(x, height/2, z);
+    barrierMesh.castShadow = true;
+    barrierMesh.receiveShadow = true;
+    scene.add(barrierMesh);
+    
+    // Physics body
+    const barrierBody = new CANNON.Body({ mass: 0 });
+    barrierBody.addShape(new CANNON.Box(new CANNON.Vec3(
+      (isVertical ? depth : width) / 2,
+      height / 2,
+      (isVertical ? width : depth) / 2
+    )));
+    barrierBody.position.set(x, height/2, z);
+    world.addBody(barrierBody);
   }
 
   function addFlatGround(courseSize) {
@@ -1529,16 +1704,21 @@ const resetDelay = 8000; // 8 seconds before ball auto-resets if stuck
 
 // Function to reset the ball to the tee
 function resetBall() {
-    ballInMotion = false;
-    // Use a higher position (3.0 instead of 1.0)
-    window.ballBody.position.set(window.teePosition.x, 3.0, window.teePosition.z);
-    window.ballBody.velocity.set(0, 0, 0);
-    window.ballBody.angularVelocity.set(0, 0, 0);
-    // Make sure it's awake
-    window.ballBody.wakeUp();
+  if (!window.ballBody || !window.teePosition) return;
+  
+  ballInMotion = false;
+  // Reset position and velocity
+  window.ballBody.position.set(window.teePosition.x, 0.5, window.teePosition.z);
+  window.ballBody.velocity.set(0, 0, 0);
+  window.ballBody.angularVelocity.set(0, 0, 0);
+  // Make sure it's awake
+  window.ballBody.wakeUp();
+  
+  // Update UI
+  if (puttFeedback) {
     puttFeedback.textContent = 'Ball reset. Ready for next shot';
   }
-
+}
 // Function to reset the ball to its current position (stop it without moving it)
 function stopBall() {
   ballInMotion = false;
@@ -1718,6 +1898,20 @@ function animate() {
   if (window.ballMesh && window.ballBody) {
     window.ballMesh.position.copy(window.ballBody.position);
     window.ballMesh.quaternion.copy(window.ballBody.quaternion);
+    
+    // Update debug sphere position
+    if (window.debugSphere) {
+      window.debugSphere.position.copy(window.ballBody.position);
+      
+      // Only show debug sphere if debug mode is on
+      window.debugSphere.visible = window.showPhysicsDebug || false;
+    }
+    
+    // Log position for debugging
+    if (window.showPhysicsDebug) {
+      console.log("Ball position:", window.ballBody.position);
+      console.log("Ball velocity:", window.ballBody.velocity);
+    }
   }
   
   // Update camera to follow ball if enabled
@@ -1734,15 +1928,6 @@ function animate() {
     window.controls.update();
   }
 
-  if (window.ballBody && window.debugSphere) {
-    // Update debug sphere position to match physics body
-    window.debugSphere.position.copy(window.ballBody.position);
-    
-    // Log the ball's y position when it's near/below ground level for debugging
-    if (window.ballBody.position.y < 0.1) {
-      console.log("Ball near/below ground. Position:", window.ballBody.position);
-    }
-  }
   renderer.render(scene, camera);
 }
 
