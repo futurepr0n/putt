@@ -652,7 +652,111 @@ function setupContactDetection() {
 }
 // Create the hole (cup)
 // Create the hole (cup)
+function createHole(x, z) {
+  // Visual representation of the hole
+  const holeRadius = 0.15;
+  const holeDepth = 0.1;
+  
+  // Create hole (black circle)
+  const holeGeometry = new THREE.CylinderGeometry(holeRadius, holeRadius, holeDepth, 32);
+  const holeMesh = new THREE.Mesh(holeGeometry, holeMaterial);
+  holeMesh.position.set(x, 0.01, z); // Slightly above ground to avoid z-fighting
+  holeMesh.receiveShadow = true;
+  scene.add(holeMesh);
+  
+  // Create flag pole
+  const poleGeometry = new THREE.CylinderGeometry(0.01, 0.01, 1, 8);
+  const poleMesh = new THREE.Mesh(poleGeometry, poleMatrial);
+  poleMesh.position.set(x, 0.5, z);
+  poleMesh.castShadow = true;
+  scene.add(poleMesh);
+  
+  // Create flag
+  const flagGeometry = new THREE.PlaneGeometry(0.3, 0.2);
+  const flagMesh = new THREE.Mesh(flagGeometry, flagMaterial);
+  flagMesh.position.set(x + 0.15, 0.8, z);
+  flagMesh.castShadow = true;
+  scene.add(flagMesh);
+  
+  // Create a subtle hole gradient around the hole
+  const holeGradientGeometry = new THREE.RingGeometry(holeRadius, holeRadius * 2, 32);
+  const holeGradientMaterial = new THREE.MeshBasicMaterial({
+    color: 0x005500,
+    transparent: true,
+    opacity: 0.3,
+    side: THREE.DoubleSide
+  });
+  const holeGradientMesh = new THREE.Mesh(holeGradientGeometry, holeGradientMaterial);
+  holeGradientMesh.rotation.x = -Math.PI / 2;
+  holeGradientMesh.position.set(x, 0.011, z);
+  scene.add(holeGradientMesh);
+  
+  // Physics trigger for hole
+  const holeBody = new CANNON.Body({
+    mass: 0,
+    collisionResponse: false,
+    type: CANNON.Body.STATIC
+  });
+  
+  // Create a slightly larger cylinder shape for easier detection
+  const triggerRadius = holeRadius * 1.5;
+  const holeShape = new CANNON.Cylinder(triggerRadius, triggerRadius, holeDepth * 2, 8);
+  holeBody.addShape(holeShape);
+  holeBody.position.set(x, 0, z);
+  holeBody.isHoleTrigger = true;
+  world.addBody(holeBody);
+  
+  // Store references for collision detection
+  window.holeMesh = holeMesh;
+  window.holeBody = holeBody;
+  window.holeRadius = holeRadius;
+  window.holeCenterX = x;
+  window.holeCenterZ = z;
+  window.holeInProgress = false;
+  
+  console.log("Hole created at:", {x, z});
+}
 
+// Replace checkBallInHole with this simpler version
+function checkBallInHole() {
+  if (courseCompleted || !window.ballBody || window.holeCenterX === undefined || window.holeCenterZ === undefined) return;
+  
+  // If hole animation is already in progress, don't check again
+  if (window.holeInProgress) return;
+  
+  const ballPos = window.ballBody.position;
+  const holeX = window.holeCenterX;
+  const holeZ = window.holeCenterZ;
+  
+  // Calculate distance from ball to hole center (horizontal only)
+  const dx = ballPos.x - holeX;
+  const dz = ballPos.z - holeZ;
+  const distance = Math.sqrt(dx*dx + dz*dz);
+  
+  // Check if ball is close enough to hole center and moving slowly
+  const velocity = window.ballBody.velocity;
+  const horizontalSpeed = Math.sqrt(velocity.x*velocity.x + velocity.z*velocity.z);
+  
+  // Apply gentle attraction when ball is near the hole
+  if (distance < window.holeRadius * 4 && horizontalSpeed < 2 && ballPos.y < 0.2) {
+    // Calculate force direction toward hole
+    const forceFactor = 0.01 * (1 - distance / (window.holeRadius * 4));
+    const forceX = -dx * forceFactor;
+    const forceZ = -dz * forceFactor;
+    
+    // Apply the force
+    window.ballBody.applyForce(
+      new CANNON.Vec3(forceX, 0, forceZ),
+      window.ballBody.position
+    );
+  }
+  
+  // Ball is in hole if it's very close to the center and moving slowly
+  if (distance < window.holeRadius * 1.2 && horizontalSpeed < 1.0 && ballPos.y < 0.15) {
+    console.log("Ball in hole! Distance:", distance, "Speed:", horizontalSpeed);
+    startHoleAnimation();
+  }
+}
 
 
 
