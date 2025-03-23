@@ -283,14 +283,14 @@ function createTeeMarker(x, z) {
 
 // Create ball
 // Modify the createBall function to ensure the ball is visible
+// Fix ball physics initialization
 function createBall(x, y, z) {
     // Visual representation
     const ballRadius = 0.05;
     const ballGeometry = new THREE.SphereGeometry(ballRadius, 32, 32);
     const ballMaterial = new THREE.MeshStandardMaterial({ 
       color: 0xFFFFFF,
-      emissive: 0x222222,
-      roughness: 0.2
+      emissive: 0x222222
     });
     const ballMesh = new THREE.Mesh(ballGeometry, ballMaterial);
     ballMesh.castShadow = true;
@@ -299,7 +299,7 @@ function createBall(x, y, z) {
     
     console.log("Creating ball at position:", {x, y, z});
     
-    // Physics body with higher position to prevent falling through ground
+    // Physics body - increase starting height to prevent falling through
     const ballBody = new CANNON.Body({ 
       mass: 0.045,
       linearDamping: 0.5,
@@ -307,26 +307,18 @@ function createBall(x, y, z) {
       allowSleep: false
     });
     ballBody.addShape(new CANNON.Sphere(ballRadius));
-    
-    // Position ball higher above ground to prevent clipping
-    ballBody.position.set(x, y + 0.2, z); // Increase the height
+    ballBody.position.set(x, y + 0.2, z); // Raise position to prevent ground clipping
     world.addBody(ballBody);
     
-    // Material for ball physics
-    ballBody.material = new CANNON.Material({
-      friction: 0.2,
-      restitution: 0.7
-    });
-    
-    // Add a contact material between ball and ground to prevent sinking
+    // Create specific ground contact material to prevent falling through
     const groundContact = new CANNON.ContactMaterial(
-      ballBody.material,
-      new CANNON.Material(), // Default material for ground
+      ballBody.material = new CANNON.Material('ballMaterial'),
+      new CANNON.Material('groundMaterial'),
       {
-        friction: 0.4,
+        friction: 0.2,
         restitution: 0.5,
-        contactEquationStiffness: 1e8,
-        contactEquationRelaxation: 3
+        contactEquationStiffness: 1e8, // Stiffer contact
+        contactEquationRelaxation: 3   // More stable contact
       }
     );
     world.addContactMaterial(groundContact);
@@ -335,9 +327,6 @@ function createBall(x, y, z) {
     window.ballMesh = ballMesh;
     window.ballBody = ballBody;
     window.ballRadius = ballRadius;
-    
-    // Don't count a stroke until player actually putts
-    ballInMotion = false;
   }
 
 // Create boundaries for the course
@@ -754,36 +743,27 @@ function showGameComplete() {
   
   // Reset ball if it gets stuck
   function checkBallReset() {
-    // Make sure ball exists before accessing its properties
+    // Make sure ball exists
     if (!window.ballBody) return;
     
     const pos = window.ballBody.position;
     const vel = window.ballBody.velocity;
     const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
     
-    // Display current ball info for debugging
-    if (ballInMotion) {
-      puttFeedback.textContent = `Ball: speed: ${speed.toFixed(1)} m/s`;
-    }
-    
-    // ONLY reset if the ball goes completely out of bounds (off the table)
-    // Do not reset just because the ball stops moving
-    if (pos.y < -5 || pos.x < -10 || pos.x > 10 || pos.z < -10 || pos.z > 10) {
-      if (strokeCount > 0) { // Only add penalty if player has made at least one stroke
-        strokeCount++; // Penalty stroke for out of bounds
+    // ONLY check for out of bounds on Y axis (falling through floor)
+    // or extremely far from course
+    if (pos.y < -5 || pos.x < -20 || pos.x > 20 || pos.z < -20 || pos.z > 20) {
+      console.log("Ball out of bounds, resetting:", pos);
+      resetBall();
+      
+      if (strokeCount > 0) {
+        strokeCount++;
         updateStrokeDisplay();
         puttFeedback.textContent = 'Out of bounds! +1 stroke penalty';
-        resetBall();
-      } else {
-        // If no strokes yet, just reset the ball without penalty
-        puttFeedback.textContent = 'Ball reset';
-        resetBall();
       }
-    } else if (Date.now() - lastPuttTime > resetDelay && 
-        speed < 0.1 && 
-        ballInMotion) {
-      // If ball has stopped moving, just set ballInMotion to false
-      // Do NOT reset the ball position
+    } 
+    // Don't do anything else here - just let the ball stop naturally
+    else if (speed < 0.1 && ballInMotion && Date.now() - lastPuttTime > 2000) {
       ballInMotion = false;
       puttFeedback.textContent = 'Ready for next shot';
     }
@@ -973,11 +953,6 @@ socket.on('orientation', (data) => {
       return;
     }
     
-    // Hide direction arrow when putting
-    if (directionArrow) {
-      directionArrow.visible = false;
-    }
-    
     // Convert device motion to appropriate putting force
     const velocityMagnitude = Math.sqrt(
       velocityDevice.x * velocityDevice.x + 
@@ -985,58 +960,36 @@ socket.on('orientation', (data) => {
       velocityDevice.z * velocityDevice.z
     );
     
-    // Scale factor should be lower for putting (more controlled)
-    let scaleFactor = 0.5;
-    if (velocityMagnitude > 20) {
-      scaleFactor = 0.4;
-    } else if (velocityMagnitude < 10) {
-      scaleFactor = 0.6;
-    }
+    // Use higher scale factor to make movement more visible
+    let scaleFactor = 0.8;
     
-    // For putting, we want motion mostly along the ground
-    // We'll project most of the force forward and some to the sides
+    // Create velocity vector - emphasize Z direction for forward motion
     const vGame = new CANNON.Vec3(
-      velocityDevice.x * scaleFactor * 0.5,
-      Math.max(0.2, velocityDevice.y * 0.2),
-      velocityDevice.z * scaleFactor
+      velocityDevice.x * scaleFactor * 0.5,  // Side-to-side movement
+      0.1, // Very small upward component 
+      Math.max(3, velocityDevice.z * scaleFactor)  // Ensure minimum forward motion
     );
     
-    console.log("Before applying velocity - Ball position:", window.ballBody.position);
+    console.log("Applying putt with velocity:", vGame);
     
-    // Reset ball velocity first to ensure clean application
+    // Clear any existing velocity
     window.ballBody.velocity.set(0, 0, 0);
     window.ballBody.angularVelocity.set(0, 0, 0);
     
-    // Apply the velocity with a slight delay to ensure physics reset
-    setTimeout(() => {
-      // Apply the velocity to the ball with a clear impulse
-      window.ballBody.applyImpulse(
-        new CANNON.Vec3(vGame.x, vGame.y, vGame.z),
-        window.ballBody.position
-      );
-      
-      // Also set the velocity directly as a backup
-      window.ballBody.velocity.set(vGame.x, vGame.y, vGame.z);
-      
-      // Add slightly more spin for realism and visibility
-      window.ballBody.angularVelocity.set(
-        (Math.random() - 0.5) * 5,
-        (Math.random() - 0.5) * 5,
-        (Math.random() - 0.5) * 5
-      );
-      
-      console.log("Applied velocity:", vGame);
-      console.log("Ball velocity after application:", window.ballBody.velocity);
-      
-      // Visual feedback
-      puttFeedback.textContent = `Putt power: ${Math.round(velocityMagnitude)}`;
-      
-      // Update ball state and stroke count
-      ballInMotion = true;
-      lastPuttTime = Date.now();
-      strokeCount++;
-      updateStrokeDisplay();
-    }, 50);
+    // Apply strong impulse directly
+    window.ballBody.applyImpulse(
+      new CANNON.Vec3(vGame.x, vGame.y, vGame.z),
+      window.ballBody.position
+    );
+    
+    // Visual feedback
+    puttFeedback.textContent = `Putt power: ${Math.round(velocityMagnitude)}`;
+    
+    // Update ball state and stroke count
+    ballInMotion = true;
+    lastPuttTime = Date.now();
+    strokeCount++;
+    updateStrokeDisplay();
   }
   
   // Animation loop
