@@ -136,6 +136,8 @@ function createCourse(courseNumber) {
     
     // Update the course info
     updateCourseInfo(courseNumber + 1, totalCourses, par);
+
+    createDirectionIndicator();
   }
 
 // Simplified Perlin Noise function for terrain generation
@@ -764,39 +766,112 @@ function showGameComplete() {
       puttFeedback.textContent = `Ball: speed: ${speed.toFixed(1)} m/s`;
     }
     
-    // If ball goes out of bounds or falls in a hole, reset it
+    // ONLY reset if the ball goes completely out of bounds (off the table)
+    // Do not reset just because the ball stops moving
     if (pos.y < -5 || pos.x < -10 || pos.x > 10 || pos.z < -10 || pos.z > 10) {
-        if (strokeCount > 0) { // Only add penalty if player has made at least one stroke
-          strokeCount++; // Penalty stroke for out of bounds
-          updateStrokeDisplay();
-          puttFeedback.textContent = 'Out of bounds! +1 stroke penalty';
-        } else {
-          // If no strokes yet, just reset the ball without penalty
-          puttFeedback.textContent = 'Ball reset';
-        }
+      if (strokeCount > 0) { // Only add penalty if player has made at least one stroke
+        strokeCount++; // Penalty stroke for out of bounds
+        updateStrokeDisplay();
+        puttFeedback.textContent = 'Out of bounds! +1 stroke penalty';
+        resetBall();
+      } else {
+        // If no strokes yet, just reset the ball without penalty
+        puttFeedback.textContent = 'Ball reset';
         resetBall();
       }
-    
-    // If ball is moving very slowly for too long, it's probably stuck
-    if (Date.now() - lastPuttTime > resetDelay && 
+    } else if (Date.now() - lastPuttTime > resetDelay && 
         speed < 0.1 && 
-        ballInMotion && 
-        !courseCompleted) {
-      
-      // Only reset if ball hasn't reached the hole
-      if (window.holeCenterX !== undefined && window.holeCenterZ !== undefined) {
-        const dx = pos.x - window.holeCenterX;
-        const dz = pos.z - window.holeCenterZ;
-        const distToHole = Math.sqrt(dx*dx + dz*dz);
-        
-        if (distToHole > 0.2) {
-          ballInMotion = false;
-          puttFeedback.textContent = 'Ready for next shot';
-        }
-      }
+        ballInMotion) {
+      // If ball has stopped moving, just set ballInMotion to false
+      // Do NOT reset the ball position
+      ballInMotion = false;
+      puttFeedback.textContent = 'Ready for next shot';
     }
   }
   
+
+  let directionArrow;
+function createDirectionIndicator() {
+  // Create arrow components
+  const arrowLength = 1;
+  const arrowHeadSize = 0.2;
+  
+  // Create arrow body
+  const bodyGeometry = new THREE.CylinderGeometry(0.02, 0.02, arrowLength, 8);
+  bodyGeometry.rotateX(Math.PI / 2); // Make it point forward (z-axis)
+  bodyGeometry.translate(0, 0, arrowLength/2); // Move center to base of arrow
+  
+  // Create arrow head
+  const headGeometry = new THREE.ConeGeometry(arrowHeadSize, arrowHeadSize*1.5, 8);
+  headGeometry.rotateX(Math.PI / 2); // Make it point forward
+  headGeometry.translate(0, 0, arrowLength); // Position at end of body
+  
+  // Combine geometries
+  const arrowGeometry = new THREE.BufferGeometry();
+  const bodyBuffer = new THREE.BufferGeometry().fromGeometry(bodyGeometry);
+  const headBuffer = new THREE.BufferGeometry().fromGeometry(headGeometry);
+  
+  // Combine the geometries
+  const combinedGeometry = THREE.BufferGeometryUtils.mergeBufferGeometries([bodyBuffer, headBuffer]);
+  
+  // Create material and mesh
+  const arrowMaterial = new THREE.MeshStandardMaterial({ 
+    color: 0xff0000,
+    transparent: true,
+    opacity: 0.7
+  });
+  
+  directionArrow = new THREE.Mesh(combinedGeometry, arrowMaterial);
+  directionArrow.visible = false; // Initially hidden
+  scene.add(directionArrow);
+}
+
+
+let lastDirectionData = null;
+function updateDirectionArrow(directionData) {
+  // Only proceed if the arrow exists and the ball is not in motion
+  if (!directionArrow || ballInMotion) return;
+  
+  // Store this data for use when actually putting
+  lastDirectionData = directionData;
+  
+  if (!window.ballBody) return;
+  
+  // Position arrow at the ball's current position (not at the tee)
+  const ballPos = window.ballBody.position;
+  directionArrow.position.set(ballPos.x, 0.1, ballPos.z); // Slightly above ground
+  
+  // Calculate direction based on controller data
+  const angle = Math.atan2(directionData.x, directionData.z);
+  
+  // Rotate arrow to point in the direction of the putt
+  directionArrow.rotation.y = angle;
+  
+  // Scale arrow based on power
+  const magnitude = Math.sqrt(
+    directionData.x * directionData.x + 
+    directionData.y * directionData.y + 
+    directionData.z * directionData.z
+  );
+  
+  // Map power to arrow length (scale)
+  const minScale = 0.5;
+  const maxScale = 2.0;
+  const powerScale = minScale + (Math.min(magnitude / 20, 1) * (maxScale - minScale));
+  
+  directionArrow.scale.z = powerScale;
+  
+  // Make arrow visible
+  directionArrow.visible = true;
+}
+
+socket.on('orientation', (data) => {
+    if (!ballInMotion && !courseCompleted) {
+      updateDirectionArrow(data);
+    }
+  });
+  
+
   // Function to reset the ball to the tee
   function resetBall() {
     ballInMotion = false;
@@ -898,6 +973,11 @@ function showGameComplete() {
       return;
     }
     
+    // Hide direction arrow when putting
+    if (directionArrow) {
+      directionArrow.visible = false;
+    }
+    
     // Convert device motion to appropriate putting force
     const velocityMagnitude = Math.sqrt(
       velocityDevice.x * velocityDevice.x + 
@@ -906,19 +986,19 @@ function showGameComplete() {
     );
     
     // Scale factor should be lower for putting (more controlled)
-    let scaleFactor = 0.5; // Increased from 0.3 to make ball move more visibly
+    let scaleFactor = 0.5;
     if (velocityMagnitude > 20) {
-      scaleFactor = 0.4; // Increased from 0.2
+      scaleFactor = 0.4;
     } else if (velocityMagnitude < 10) {
-      scaleFactor = 0.6; // Increased from 0.4
+      scaleFactor = 0.6;
     }
     
     // For putting, we want motion mostly along the ground
     // We'll project most of the force forward and some to the sides
     const vGame = new CANNON.Vec3(
-      velocityDevice.x * scaleFactor * 0.5,  // Side-to-side movement
-      Math.max(0.2, velocityDevice.y * 0.2), // Slightly more upward motion for visibility
-      velocityDevice.z * scaleFactor         // Forward motion (main direction)
+      velocityDevice.x * scaleFactor * 0.5,
+      Math.max(0.2, velocityDevice.y * 0.2),
+      velocityDevice.z * scaleFactor
     );
     
     console.log("Before applying velocity - Ball position:", window.ballBody.position);

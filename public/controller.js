@@ -37,6 +37,43 @@ let puttStartTime = 0;
 let orientationHistory = [];
 let lastOrientationTime = 0;
 
+let sendingOrientation = false;
+const orientationInterval = 100; // ms between orientation updates
+
+function startSendingOrientation() {
+  if (sendingOrientation) return;
+  sendingOrientation = true;
+  
+  // Send initial orientation
+  sendOrientationData();
+  
+  // Set up interval to regularly send orientation data
+  window.orientationUpdateInterval = setInterval(sendOrientationData, orientationInterval);
+}
+
+function stopSendingOrientation() {
+  sendingOrientation = false;
+  if (window.orientationUpdateInterval) {
+    clearInterval(window.orientationUpdateInterval);
+    window.orientationUpdateInterval = null;
+  }
+}
+
+function sendOrientationData() {
+  if (!socket.connected) return;
+  
+  // Calculate direction from orientation
+  // Simple directional data based on device orientation
+  const direction = {
+    x: -Math.sin(currentOrientation.gamma * (Math.PI / 180)) * 20,
+    y: Math.sin(currentOrientation.beta * (Math.PI / 180)) * 10,
+    z: Math.cos(currentOrientation.gamma * (Math.PI / 180)) * 20
+  };
+  
+  // Send the direction data to the server
+  socket.emit('orientation', direction);
+}
+
 // Debug function
 function debug(message) {
   console.log(message);
@@ -170,6 +207,7 @@ window.addEventListener('deviceorientation', handleOrientation, true);
 if (puttButton) {
   puttButton.addEventListener('touchstart', (e) => {
     e.preventDefault();
+    startSendingOrientation();
     isPutting = true;
     puttStartTime = Date.now();
     initialOrientation.beta = currentOrientation.beta;
@@ -190,6 +228,7 @@ if (puttButton) {
   // End putt and calculate velocity
   puttButton.addEventListener('touchend', (e) => {
     e.preventDefault();
+    stopSendingOrientation();
     if (isPutting) {
       isPutting = false;
       const puttEndTime = Date.now();

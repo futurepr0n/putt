@@ -217,6 +217,23 @@ io.on('connection', (socket) => {
   }
 });
 
+
+socket.on('orientation', (data) => {
+  if (!currentRoom) {
+    return;
+  }
+  
+  // Validate the orientation data
+  if (data && typeof data === 'object' && 
+      'x' in data && 'y' in data && 'z' in data &&
+      !isNaN(data.x) && !isNaN(data.y) && !isNaN(data.z)) {
+    
+    // Forward the orientation data to all clients in the room
+    // Use socket.to() to only send to others (not back to sender)
+    io.to(currentRoom).emit('orientation', data);
+  }
+});
+
 // Schedule cleanup every hour
 setInterval(cleanupExpiredRooms, 60 * 60 * 1000);
 
