@@ -62,61 +62,36 @@ function stopSendingOrientation() {
 function sendOrientationData() {
   if (!socket.connected) return;
   
-  let direction = { x: 0, y: 0, z: 0 };
+  // Calculate direction based on device orientation ONLY
+  // No automatic pointing toward the hole
+  const direction = {
+    // Reduced power for more precise control
+    x: -Math.sin(currentOrientation.gamma * (Math.PI / 180)) * 15,
+    y: Math.sin(currentOrientation.beta * (Math.PI / 180)) * 5,
+    z: Math.cos(currentOrientation.gamma * (Math.PI / 180)) * 15
+  };
   
-  // Calculate direction based on device orientation
-  if (window.holeCenterX !== undefined && window.holeCenterZ !== undefined && window.ballBody) {
-    // Get vector from ball to hole
-    const ballToHoleX = window.holeCenterX - window.ballBody.position.x;
-    const ballToHoleZ = window.holeCenterZ - window.ballBody.position.z;
-    
-    // Normalize this vector
-    const length = Math.sqrt(ballToHoleX * ballToHoleX + ballToHoleZ * ballToHoleZ);
-    
-    if (length > 0) {
-      const forwardX = ballToHoleX / length;
-      const forwardZ = ballToHoleZ / length;
-      
-      // Create a perpendicular vector (rightward)
-      const rightX = forwardZ;
-      const rightZ = -forwardX;
-      
-      // Use gamma (left/right tilt) to determine direction along the right axis
-      // Use beta (forward/back tilt) to determine direction along the forward axis
-      
-      // Scale factors for sensitivity
-      const gammaScale = 0.7; // Reduced from 1.0 for less sensitive left/right
-      const betaScale = 0.7;  // Reduced from 1.0 for less sensitive forward/back
-      
-      // Calculate direction components
-      const gammaRad = currentOrientation.gamma * (Math.PI / 180) * gammaScale;
-      const betaRad = (currentOrientation.beta - 45) * (Math.PI / 180) * betaScale;
-      
-      // Mix the forward and right vectors based on tilt
-      direction.x = forwardX * Math.cos(betaRad) + rightX * Math.sin(gammaRad);
-      direction.z = forwardZ * Math.cos(betaRad) + rightZ * Math.sin(gammaRad);
-      direction.y = Math.sin(betaRad) * 0.5; // Reduced y component
-      
-      // Apply a speed scaling based on the tilt magnitude
-      const tiltMagnitude = Math.sqrt(gammaRad * gammaRad + betaRad * betaRad);
-      const speedScale = Math.min(tiltMagnitude * 10, 20); // Cap at 20
-      
-      direction.x *= speedScale;
-      direction.y *= speedScale;
-      direction.z *= speedScale;
-    }
-  } else {
-    // Fall back to the original calculation if hole position is not available
-    direction = {
-      x: -Math.sin(currentOrientation.gamma * (Math.PI / 180)) * 10, // Reduced from 20
-      y: Math.sin(currentOrientation.beta * (Math.PI / 180)) * 5,     // Reduced from 10
-      z: Math.cos(currentOrientation.gamma * (Math.PI / 180)) * 10    // Reduced from 20
-    };
-  }
+  // Apply additional scaling based on tilt intensity
+  // Calculate total tilt amount
+  const betaTilt = Math.abs(currentOrientation.beta - 45); // Deviation from 45 degrees
+  const gammaTilt = Math.abs(currentOrientation.gamma);
+  const totalTilt = Math.sqrt(betaTilt * betaTilt + gammaTilt * gammaTilt);
+  
+  // Apply a power multiplier based on tilt intensity
+  // More tilt = more power, but cap it for stability
+  let powerMultiplier = Math.min(totalTilt / 30, 1.2);
+  
+  // Apply the multiplier to the direction vector
+  direction.x *= powerMultiplier;
+  direction.y *= powerMultiplier;
+  direction.z *= powerMultiplier;
   
   // Send the direction data to the server
   socket.emit('orientation', direction);
 }
+
+
+
 // Debug function
 function debug(message) {
   console.log(message);

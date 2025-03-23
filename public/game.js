@@ -662,7 +662,7 @@ function createHole(x, z) {
   holeMesh.receiveShadow = true;
   scene.add(holeMesh);
   
-  // Create flag pole (with larger collision size for hits)
+  // Create flag pole
   const poleHeight = 1;
   const poleRadius = 0.01;
   const poleGeometry = new THREE.CylinderGeometry(poleRadius, poleRadius, poleHeight, 8);
@@ -678,8 +678,9 @@ function createHole(x, z) {
   flagMesh.castShadow = true;
   scene.add(flagMesh);
   
-  // Add a hole area trigger zone that's more generous
-  const triggerRadius = holeRadius * 5; // Much larger trigger radius
+  // REDUCED TRIGGER ZONE SIZE - much more precise
+  // Only slightly larger than the actual hole
+  const triggerRadius = holeRadius * 1.8; // Reduced from 5x to 1.8x
   const triggerHeight = 0.2;
   const triggerGeometry = new THREE.CylinderGeometry(triggerRadius, triggerRadius, triggerHeight, 32);
   const triggerMaterial = new THREE.MeshBasicMaterial({ 
@@ -705,18 +706,26 @@ function createHole(x, z) {
   holeBody.isHoleTrigger = true; // Mark it as a hole trigger for collision detection
   world.addBody(holeBody);
   
+  // Create a wider attraction zone (separate from trigger)
+  // This helps guide the ball toward the hole when it's close
+  const attractionRadius = holeRadius * 4; 
+  
   // Store references for collision detection
   window.holeMesh = holeMesh;
   window.holeTriggerMesh = triggerMesh;
   window.holeBody = holeBody;
   window.holeRadius = holeRadius;
   window.holeTriggerRadius = triggerRadius;
+  window.holeAttractionRadius = attractionRadius;
   window.holeCenterX = x;
   window.holeCenterZ = z;
   window.holeInProgress = false;
   
   console.log("Hole created at:", {x, z}, "with trigger radius:", triggerRadius);
 }
+
+
+
 
 function checkBallInHole() {
   if (courseCompleted || !window.ballBody || window.holeCenterX === undefined || window.holeCenterZ === undefined) return;
@@ -749,24 +758,24 @@ function checkBallInHole() {
     window.holeTriggerMesh.material.opacity = 0;
   }
   
-  // More generous conditions for ball in hole:
-  // 1. Ball is within the trigger radius
-  // 2. Ball is moving slowly enough
-  // 3. Ball is at a reasonable height
-  if (distance < window.holeTriggerRadius && horizontalSpeed < 2.0 && ballPos.y < 0.15) {
-    // Even more generous condition - if the ball is very close to center, sink it regardless of speed
-    if (distance < window.holeRadius * 2 || horizontalSpeed < 0.5) {
+  // STRICTER CONDITIONS for ball in hole:
+  // 1. Ball must be very close to the hole center
+  // 2. Ball must be moving slowly enough
+  // 3. Ball must be at a reasonable height
+  if (distance < window.holeTriggerRadius && horizontalSpeed < 1.5 && ballPos.y < 0.15) {
+    // Extra check - must be directly over the hole
+    if (distance < window.holeRadius * 1.5) {
       console.log("Ball in hole! Distance:", distance, "Speed:", horizontalSpeed);
       startHoleAnimation();
     }
   }
   
-  // Apply a gentle attraction toward the hole when close
-  if (distance < window.holeTriggerRadius && horizontalSpeed < 3.0 && ballPos.y < 0.3) {
+  // Apply a gentle attraction toward the hole when close (using the wider attraction radius)
+  if (distance < window.holeAttractionRadius && horizontalSpeed < 2.0 && ballPos.y < 0.3) {
     // Stronger attraction when closer to hole
-    const attractionStrength = 0.01 * (1 - distance / window.holeTriggerRadius);
-    const forceX = -dx * attractionStrength * (window.holeTriggerRadius / distance);
-    const forceZ = -dz * attractionStrength * (window.holeTriggerRadius / distance);
+    const attractionStrength = 0.01 * (1 - distance / window.holeAttractionRadius);
+    const forceX = -dx * attractionStrength * (window.holeAttractionRadius / distance);
+    const forceZ = -dz * attractionStrength * (window.holeAttractionRadius / distance);
     
     // Apply the force
     window.ballBody.applyForce(
@@ -775,6 +784,7 @@ function checkBallInHole() {
     );
   }
 }
+
 
 
 // Animate the ball dropping into the hole
@@ -1881,14 +1891,13 @@ function updateDirectionArrow(directionData) {
   
   if (!window.ballBody) return;
   
-  // Position arrow at the ball's current position (not at the tee)
+  // Position arrow at the ball's current position
   const ballPos = window.ballBody.position;
   directionArrow.position.set(ballPos.x, 0.1, ballPos.z); // Slightly above ground
   
-  // Calculate direction based on controller data
+  // IMPORTANT CHANGE: Use raw orientation data from controller
+  // This allows aiming in any direction regardless of ball position
   const angle = Math.atan2(directionData.x, directionData.z);
-  
-  // Rotate arrow to point in the direction of the putt
   directionArrow.rotation.y = angle;
   
   // Scale arrow based on power
@@ -1901,23 +1910,20 @@ function updateDirectionArrow(directionData) {
   // Map power to arrow length (scale)
   const minScale = 0.5;
   const maxScale = 2.0;
-  const powerScale = minScale + (Math.min(magnitude / 20, 1) * (maxScale - minScale));
+  const powerScale = minScale + (Math.min(magnitude / 30, 1) * (maxScale - minScale)); // Adjusted to match new power settings
   
   // Apply scale
   if (directionArrow instanceof THREE.Group) {
-    // If it's a group, scale the whole group
     directionArrow.scale.set(1, 1, powerScale);
   } else {
-    // If it's a mesh, scale just the z axis
     directionArrow.scale.z = powerScale;
   }
   
-  // Make arrow visible with higher opacity for better visibility
+  // Make arrow visible with higher opacity
   directionArrow.visible = true;
   if (directionArrow.material) {
     directionArrow.material.opacity = 0.9;
   } else if (directionArrow.children) {
-    // Update materials for all children
     directionArrow.children.forEach(child => {
       if (child.material) {
         child.material.opacity = 0.9;
@@ -1925,7 +1931,6 @@ function updateDirectionArrow(directionData) {
     });
   }
 }
-
 // Socket.io connection
 const socket = io();
 const connectionStatus = document.getElementById('connectionStatus');
@@ -2128,14 +2133,18 @@ function handlePutt(velocityDevice) {
     }
   }
   
-  // MODIFIED POWER SCALING - more moderate and predictable
-  // Scale factor based on the magnitude of the input
+  // MODIFIED POWER SCALING - more gentle and predictable
   const minForce = 0.5;  // Lower minimum force
   const maxForce = 3.0;  // Lower maximum force
   
-  // Use a more linear mapping for better control
-  const normalizedMagnitude = Math.min(velocityMagnitude / 30, 1); // Increased from 20 to 30
-  const forceMagnitude = minForce + normalizedMagnitude * (maxForce - minForce);
+  // Use a smoothed curve for power control
+  const normalizedMagnitude = Math.min(velocityMagnitude / 30, 1);
+  // Apply a power curve: slower at low power, more responsive at mid power
+  const powerCurve = normalizedMagnitude < 0.5 ? 
+    normalizedMagnitude * normalizedMagnitude * 2 : // Quadratic for low values
+    normalizedMagnitude; // Linear for higher values
+  
+  const forceMagnitude = minForce + powerCurve * (maxForce - minForce);
   
   console.log("Applying putt with force magnitude:", forceMagnitude);
   console.log("Based on velocity magnitude:", velocityMagnitude);
@@ -2143,7 +2152,7 @@ function handlePutt(velocityDevice) {
   // Create the final velocity vector with reduced force
   const vGame = new CANNON.Vec3(
     direction.x * forceMagnitude,
-    0.05, // Even smaller upward component for flatter shots
+    0.05, // Small upward component for flatter shots
     direction.z * forceMagnitude
   );
   
@@ -2165,7 +2174,7 @@ function handlePutt(velocityDevice) {
   }
   
   // Visual feedback
-  puttFeedback.textContent = `Putt power: ${Math.round(normalizedMagnitude * 100)}%`; // Show as percentage
+  puttFeedback.textContent = `Putt power: ${Math.round(normalizedMagnitude * 100)}%`;
   
   // Update ball state and stroke count
   ballInMotion = true;
