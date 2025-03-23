@@ -12,6 +12,26 @@ const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerH
 camera.position.set(0, 5, -7);
 camera.lookAt(0, 0, 2);
 
+const script = document.createElement('script');
+script.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/examples/js/controls/OrbitControls.js';
+script.onload = function() {
+  // Initialize controls
+  controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.25;
+  controls.screenSpacePanning = false;
+  controls.maxPolarAngle = Math.PI / 2;
+  controls.minDistance = 3;
+  controls.maxDistance = 20;
+  
+  // Set initial camera position
+  camera.position.set(0, 8, -10);
+  camera.lookAt(0, 0, 0);
+  controls.update();
+};
+
+document.head.appendChild(script);
+
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
@@ -138,6 +158,8 @@ function createCourse(courseNumber) {
     updateCourseInfo(courseNumber + 1, totalCourses, par);
 
     createDirectionIndicator();
+
+    createSafetyFloor(courseSize);
   }
 
 // Simplified Perlin Noise function for terrain generation
@@ -284,30 +306,52 @@ function createTeeMarker(x, z) {
 // Create ball
 // Modify the createBall function to ensure the ball is visible
 // Fix ball physics initialization
+// Replace the createBall function with this improved version
+// Replace ball creation in the createBall function
 function createBall(x, y, z) {
-    // Visual representation
-    const ballRadius = 0.05;
+    // Visual representation - larger ball with better materials
+    const ballRadius = 0.08; // Increased from 0.05
     const ballGeometry = new THREE.SphereGeometry(ballRadius, 32, 32);
+    
+    // Create a more visible golf ball material with dimples
     const ballMaterial = new THREE.MeshStandardMaterial({ 
       color: 0xFFFFFF,
-      emissive: 0x222222
+      emissive: 0xAAAAAA,
+      emissiveIntensity: 0.2,
+      roughness: 0.3,
+      metalness: 0.2
     });
+    
     const ballMesh = new THREE.Mesh(ballGeometry, ballMaterial);
     ballMesh.castShadow = true;
     ballMesh.receiveShadow = true;
+    
+    // Add a small highlight to make the ball more visible
+    const highlightGeometry = new THREE.SphereGeometry(ballRadius * 0.2, 16, 16);
+    const highlightMaterial = new THREE.MeshBasicMaterial({
+      color: 0xFFFFFF,
+      transparent: true,
+      opacity: 0.7
+    });
+    const highlight = new THREE.Mesh(highlightGeometry, highlightMaterial);
+    highlight.position.set(ballRadius * 0.4, ballRadius * 0.4, ballRadius * 0.4);
+    ballMesh.add(highlight);
+    
     scene.add(ballMesh);
     
     console.log("Creating ball at position:", {x, y, z});
     
-    // Physics body - increase starting height to prevent falling through
+    // Physics body - with updated radius
     const ballBody = new CANNON.Body({ 
       mass: 0.045,
       linearDamping: 0.5,
       angularDamping: 0.5,
-      allowSleep: false
+      allowSleep: true,
+      sleepSpeedLimit: 0.1,
+      sleepTimeLimit: 1
     });
     ballBody.addShape(new CANNON.Sphere(ballRadius));
-    ballBody.position.set(x, y + 0.2, z); // Raise position to prevent ground clipping
+    ballBody.position.set(x, y + 0.5, z); // Raise position to prevent ground clipping
     world.addBody(ballBody);
     
     // Create specific ground contact material to prevent falling through
@@ -316,7 +360,7 @@ function createBall(x, y, z) {
       new CANNON.Material('groundMaterial'),
       {
         friction: 0.2,
-        restitution: 0.5,
+        restitution: 0.3,
         contactEquationStiffness: 1e8, // Stiffer contact
         contactEquationRelaxation: 3   // More stable contact
       }
@@ -327,6 +371,74 @@ function createBall(x, y, z) {
     window.ballMesh = ballMesh;
     window.ballBody = ballBody;
     window.ballRadius = ballRadius;
+  }
+
+  function createSafetyFloor(courseSize) {
+    // Create a large invisible plane below the course to catch falling balls
+    const floorGeometry = new THREE.PlaneGeometry(courseSize.width * 3, courseSize.length * 3);
+    const floorMaterial = new THREE.MeshBasicMaterial({ 
+      color: 0x355E3B, 
+      transparent: true,
+      opacity: 0.0,
+      side: THREE.DoubleSide
+    });
+    const floorMesh = new THREE.Mesh(floorGeometry, floorMaterial);
+    floorMesh.rotation.x = -Math.PI / 2;
+    floorMesh.position.y = -0.5; // Just below the actual course
+    scene.add(floorMesh);
+    
+    // Physics body for the floor
+    const floorBody = new CANNON.Body({ mass: 0 });
+    const floorShape = new CANNON.Plane();
+    floorBody.addShape(floorShape);
+    floorBody.position.set(0, -0.5, 0);
+    floorBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
+    world.addBody(floorBody);
+    
+    // Add the safety floor material
+    floorBody.material = new CANNON.Material('safetyFloorMaterial');
+    
+    // Create contact material for the ball and safety floor
+    if (window.ballBody && window.ballBody.material) {
+      const ballFloorContact = new CANNON.ContactMaterial(
+        window.ballBody.material,
+        floorBody.material,
+        {
+          friction: 0.3,
+          restitution: 0.5,
+          contactEquationStiffness: 1e8,
+          contactEquationRelaxation: 3
+        }
+      );
+      world.addContactMaterial(ballFloorContact);
+    }
+  }
+  
+  // Modify the checkBallReset function to improve out-of-bounds detection
+  function checkBallReset() {
+    // Make sure ball exists
+    if (!window.ballBody) return;
+    
+    const pos = window.ballBody.position;
+    const vel = window.ballBody.velocity;
+    const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
+    
+    // Only reset if the ball is REALLY out of bounds (increased threshold for y)
+    if (pos.y < -10 || pos.x < -30 || pos.x > 30 || pos.z < -30 || pos.z > 30) {
+      console.log("Ball out of bounds, resetting:", pos);
+      resetBall();
+      
+      if (strokeCount > 0) {
+        strokeCount++;
+        updateStrokeDisplay();
+        puttFeedback.textContent = 'Out of bounds! +1 stroke penalty';
+      }
+    } 
+    // Don't do anything else here - just let the ball stop naturally
+    else if (speed < 0.1 && ballInMotion && Date.now() - lastPuttTime > 2000) {
+      ballInMotion = false;
+      puttFeedback.textContent = 'Ready for next shot';
+    }
   }
 
 // Create boundaries for the course
@@ -771,40 +883,66 @@ function showGameComplete() {
   
 
   let directionArrow;
+// Replace the createDirectionIndicator function with this updated version
 function createDirectionIndicator() {
-  // Create arrow components
-  const arrowLength = 1;
-  const arrowHeadSize = 0.2;
-  
-  // Create arrow body
-  const bodyGeometry = new THREE.CylinderGeometry(0.02, 0.02, arrowLength, 8);
-  bodyGeometry.rotateX(Math.PI / 2); // Make it point forward (z-axis)
-  bodyGeometry.translate(0, 0, arrowLength/2); // Move center to base of arrow
-  
-  // Create arrow head
-  const headGeometry = new THREE.ConeGeometry(arrowHeadSize, arrowHeadSize*1.5, 8);
-  headGeometry.rotateX(Math.PI / 2); // Make it point forward
-  headGeometry.translate(0, 0, arrowLength); // Position at end of body
-  
-  // Combine geometries
-  const arrowGeometry = new THREE.BufferGeometry();
-  const bodyBuffer = new THREE.BufferGeometry().fromGeometry(bodyGeometry);
-  const headBuffer = new THREE.BufferGeometry().fromGeometry(headGeometry);
-  
-  // Combine the geometries
-  const combinedGeometry = THREE.BufferGeometryUtils.mergeBufferGeometries([bodyBuffer, headBuffer]);
-  
-  // Create material and mesh
-  const arrowMaterial = new THREE.MeshStandardMaterial({ 
-    color: 0xff0000,
-    transparent: true,
-    opacity: 0.7
-  });
-  
-  directionArrow = new THREE.Mesh(combinedGeometry, arrowMaterial);
-  directionArrow.visible = false; // Initially hidden
-  scene.add(directionArrow);
-}
+    // Create arrow components
+    const arrowLength = 1;
+    const arrowHeadSize = 0.2;
+    
+    // Create arrow body
+    const bodyGeometry = new THREE.CylinderGeometry(0.02, 0.02, arrowLength, 8);
+    bodyGeometry.rotateX(Math.PI / 2); // Make it point forward (z-axis)
+    bodyGeometry.translate(0, 0, arrowLength/2); // Move center to base of arrow
+    
+    // Create arrow head
+    const headGeometry = new THREE.ConeGeometry(arrowHeadSize, arrowHeadSize*1.5, 8);
+    headGeometry.rotateX(Math.PI / 2); // Make it point forward
+    headGeometry.translate(0, 0, arrowLength); // Position at end of body
+    
+    // In Three.js r134, CylinderGeometry and ConeGeometry already return BufferGeometry
+    // so we don't need to call fromGeometry
+    
+    // Merge the geometries using BufferGeometryUtils (need to include it)
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/examples/js/utils/BufferGeometryUtils.js';
+    script.onload = function() {
+      // Once the script is loaded, merge the geometries
+      const combinedGeometry = THREE.BufferGeometryUtils.mergeBufferGeometries([
+        bodyGeometry, 
+        headGeometry
+      ]);
+      
+      // Create material and mesh
+      const arrowMaterial = new THREE.MeshStandardMaterial({ 
+        color: 0xff0000,
+        transparent: true,
+        opacity: 0.7
+      });
+      
+      directionArrow = new THREE.Mesh(combinedGeometry, arrowMaterial);
+      directionArrow.visible = false; // Initially hidden
+      scene.add(directionArrow);
+    };
+    
+    document.head.appendChild(script);
+    
+    // As a fallback in case the loading fails, create a simple arrow
+    // using just the body cylinder
+    setTimeout(() => {
+      if (!directionArrow) {
+        console.log("Creating fallback direction arrow");
+        const arrowMaterial = new THREE.MeshStandardMaterial({ 
+          color: 0xff0000,
+          transparent: true,
+          opacity: 0.7
+        });
+        
+        directionArrow = new THREE.Mesh(bodyGeometry, arrowMaterial);
+        directionArrow.visible = false;
+        scene.add(directionArrow);
+      }
+    }, 1000);
+  }
 
 
 let lastDirectionData = null;
@@ -991,6 +1129,31 @@ socket.on('orientation', (data) => {
     strokeCount++;
     updateStrokeDisplay();
   }
+
+  function addCameraInfo() {
+    const cameraInfo = document.createElement('div');
+    cameraInfo.id = 'cameraInfo';
+    cameraInfo.style.position = 'absolute';
+    cameraInfo.style.bottom = '10px';
+    cameraInfo.style.left = '50%';
+    cameraInfo.style.transform = 'translateX(-50%)';
+    cameraInfo.style.color = 'white';
+    cameraInfo.style.fontSize = '14px';
+    cameraInfo.style.fontFamily = 'Arial, sans-serif';
+    cameraInfo.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+    cameraInfo.style.padding = '8px 16px';
+    cameraInfo.style.borderRadius = '5px';
+    cameraInfo.style.pointerEvents = 'none';
+    cameraInfo.textContent = 'Mouse: Click & Drag to rotate, Scroll to zoom';
+    document.body.appendChild(cameraInfo);
+    
+    // Hide after 10 seconds
+    setTimeout(() => {
+      cameraInfo.style.opacity = '0';
+      cameraInfo.style.transition = 'opacity 1s';
+    }, 10000);
+  }
+  
   
   // Animation loop
   function animate() {
@@ -1011,8 +1174,14 @@ socket.on('orientation', (data) => {
     // Check if ball is in hole
     checkBallInHole();
   
+    if (typeof controls !== 'undefined') {
+        controls.update();
+      }
+
     renderer.render(scene, camera);
   }
+  
+
   
   // Start the animation
   animate();
