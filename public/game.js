@@ -630,6 +630,22 @@ function setupContactDetection() {
         }
       }
     }
+    
+    // Check for hole contact
+    if ((bodyA === window.ballBody && bodyB.isHoleTrigger) || 
+        (bodyB === window.ballBody && bodyA.isHoleTrigger)) {
+      
+      console.log("Ball contacted hole trigger zone");
+      
+      // If ball is moving slowly enough, trigger hole completion
+      const velocity = window.ballBody.velocity;
+      const speed = Math.sqrt(velocity.x*velocity.x + velocity.y*velocity.y + velocity.z*velocity.z);
+      
+      if (speed < 2.0 && !window.holeInProgress && !courseCompleted) {
+        console.log("Ball in hole detected via contact!");
+        startHoleAnimation();
+      }
+    }
   });
 }
 
@@ -646,10 +662,12 @@ function createHole(x, z) {
   holeMesh.receiveShadow = true;
   scene.add(holeMesh);
   
-  // Create flag pole
-  const poleGeometry = new THREE.CylinderGeometry(0.01, 0.01, 1, 8);
+  // Create flag pole (with larger collision size for hits)
+  const poleHeight = 1;
+  const poleRadius = 0.01;
+  const poleGeometry = new THREE.CylinderGeometry(poleRadius, poleRadius, poleHeight, 8);
   const poleMesh = new THREE.Mesh(poleGeometry, poleMatrial);
-  poleMesh.position.set(x, 0.5, z);
+  poleMesh.position.set(x, poleHeight/2, z);
   poleMesh.castShadow = true;
   scene.add(poleMesh);
   
@@ -660,44 +678,46 @@ function createHole(x, z) {
   flagMesh.castShadow = true;
   scene.add(flagMesh);
   
-  // Add a subtle hole gradient around the hole for visual effect
-  const holeGradientGeometry = new THREE.RingGeometry(holeRadius, holeRadius * 3, 32);
-  const holeGradientMaterial = new THREE.MeshBasicMaterial({
-    color: 0x005500,
-    transparent: true,
-    opacity: 0.3,
-    side: THREE.DoubleSide
+  // Add a hole area trigger zone that's more generous
+  const triggerRadius = holeRadius * 5; // Much larger trigger radius
+  const triggerHeight = 0.2;
+  const triggerGeometry = new THREE.CylinderGeometry(triggerRadius, triggerRadius, triggerHeight, 32);
+  const triggerMaterial = new THREE.MeshBasicMaterial({ 
+    color: 0x00FF00, 
+    transparent: true, 
+    opacity: window.showPhysicsDebug ? 0.2 : 0 
   });
-  const holeGradientMesh = new THREE.Mesh(holeGradientGeometry, holeGradientMaterial);
-  holeGradientMesh.rotation.x = -Math.PI / 2;
-  holeGradientMesh.position.set(x, 0.011, z);
-  scene.add(holeGradientMesh);
+  const triggerMesh = new THREE.Mesh(triggerGeometry, triggerMaterial);
+  triggerMesh.position.set(x, triggerHeight/2, z);
+  scene.add(triggerMesh);
   
-  // Create a invisible attraction zone around the hole
-  // This will help guide the ball in when it's close
-  const attractionRadius = holeRadius * 4; // Larger radius for attraction
-  const attractionGeometry = new THREE.SphereGeometry(attractionRadius, 16, 8);
-  const attractionMaterial = new THREE.MeshBasicMaterial({
-    color: 0x00FF00,
-    transparent: true,
-    opacity: 0.0,
-    wireframe: true
+  // Create an invisible physics body for the hole area
+  const holeBody = new CANNON.Body({
+    mass: 0,
+    collisionResponse: false,
+    type: CANNON.Body.STATIC
   });
-  const attractionMesh = new THREE.Mesh(attractionGeometry, attractionMaterial);
-  attractionMesh.position.set(x, 0, z);
-  scene.add(attractionMesh);
+  
+  // Use a cylinder shape for the hole trigger zone
+  const holeShape = new CANNON.Cylinder(triggerRadius, triggerRadius, triggerHeight, 16);
+  holeBody.addShape(holeShape);
+  holeBody.position.set(x, triggerHeight/2, z);
+  holeBody.isHoleTrigger = true; // Mark it as a hole trigger for collision detection
+  world.addBody(holeBody);
   
   // Store references for collision detection
   window.holeMesh = holeMesh;
+  window.holeTriggerMesh = triggerMesh;
+  window.holeBody = holeBody;
   window.holeRadius = holeRadius;
-  window.attractionMesh = attractionMesh;
-  window.attractionRadius = attractionRadius;
+  window.holeTriggerRadius = triggerRadius;
   window.holeCenterX = x;
   window.holeCenterZ = z;
   window.holeInProgress = false;
+  
+  console.log("Hole created at:", {x, z}, "with trigger radius:", triggerRadius);
 }
 
-// Enhanced ball-in-hole detection and animation
 function checkBallInHole() {
   if (courseCompleted || !window.ballBody || window.holeCenterX === undefined || window.holeCenterZ === undefined) return;
   
@@ -711,51 +731,55 @@ function checkBallInHole() {
   // Calculate distance from ball to hole center (horizontal only)
   const dx = ballPos.x - holeX;
   const dz = ballPos.z - holeZ;
-  const distanceSquared = dx*dx + dz*dz;
-  const distance = Math.sqrt(distanceSquared);
+  const distance = Math.sqrt(dx*dx + dz*dz);
   
   // Check ball speed
   const velocity = window.ballBody.velocity;
   const horizontalSpeed = Math.sqrt(velocity.x*velocity.x + velocity.z*velocity.z);
   
-  // Apply gentle attraction when ball is near the hole to help it in
-  // Only if the ball is moving slow enough
-  if (distance < window.attractionRadius && horizontalSpeed < 2.0 && ballPos.y < 0.3) {
-    // Apply a gentle force toward the hole
-    const attractionStrength = 0.05 * (1 - distance / window.attractionRadius);
-    const forceX = -dx * attractionStrength;
-    const forceZ = -dz * attractionStrength;
+  // Display debug info if enabled
+  if (window.showPhysicsDebug) {
+    console.log(`Distance to hole: ${distance.toFixed(2)}, Speed: ${horizontalSpeed.toFixed(2)}, Y: ${ballPos.y.toFixed(2)}`);
     
-    // Apply the attractive force to the ball
+    // Make the trigger zone visible in debug mode
+    if (window.holeTriggerMesh) {
+      window.holeTriggerMesh.material.opacity = 0.2;
+    }
+  } else if (window.holeTriggerMesh) {
+    window.holeTriggerMesh.material.opacity = 0;
+  }
+  
+  // More generous conditions for ball in hole:
+  // 1. Ball is within the trigger radius
+  // 2. Ball is moving slowly enough
+  // 3. Ball is at a reasonable height
+  if (distance < window.holeTriggerRadius && horizontalSpeed < 2.0 && ballPos.y < 0.15) {
+    // Even more generous condition - if the ball is very close to center, sink it regardless of speed
+    if (distance < window.holeRadius * 2 || horizontalSpeed < 0.5) {
+      console.log("Ball in hole! Distance:", distance, "Speed:", horizontalSpeed);
+      startHoleAnimation();
+    }
+  }
+  
+  // Apply a gentle attraction toward the hole when close
+  if (distance < window.holeTriggerRadius && horizontalSpeed < 3.0 && ballPos.y < 0.3) {
+    // Stronger attraction when closer to hole
+    const attractionStrength = 0.01 * (1 - distance / window.holeTriggerRadius);
+    const forceX = -dx * attractionStrength * (window.holeTriggerRadius / distance);
+    const forceZ = -dz * attractionStrength * (window.holeTriggerRadius / distance);
+    
+    // Apply the force
     window.ballBody.applyForce(
       new CANNON.Vec3(forceX, 0, forceZ),
       window.ballBody.position
     );
-    
-    // Add a subtle damping effect when near the hole to slow the ball
-    if (distance < window.attractionRadius / 2) {
-      window.ballBody.velocity.x *= 0.98;
-      window.ballBody.velocity.z *= 0.98;
-    }
-    
-    // Visual debug - make attraction zone visible when ball is inside
-    if (window.showPhysicsDebug && window.attractionMesh) {
-      window.attractionMesh.material.opacity = 0.1;
-    }
-  } else if (window.attractionMesh) {
-    // Hide attraction zone when ball is outside
-    window.attractionMesh.material.opacity = 0;
-  }
-  
-  // Ball is in hole if it's close enough to the center and moving slowly
-  if (distance < window.holeRadius * 1.2 && horizontalSpeed < 0.8 && ballPos.y < 0.15) {
-    startHoleAnimation();
   }
 }
 
+
 // Animate the ball dropping into the hole
 function startHoleAnimation() {
-  if (window.holeInProgress) return;
+  if (window.holeInProgress || courseCompleted) return;
   window.holeInProgress = true;
   
   console.log("Ball in hole! Starting animation");
@@ -772,7 +796,33 @@ function startHoleAnimation() {
   const startTime = Date.now();
   
   // Create a satisfying "ball falling in hole" sound
-  playSinkSound();
+  try {
+    // Create an audio context
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    
+    // Create oscillator for the "plop" sound
+    const osc = audioContext.createOscillator();
+    const gain = audioContext.createGain();
+    
+    // Connect everything
+    osc.connect(gain);
+    gain.connect(audioContext.destination);
+    
+    // Set properties
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(300, audioContext.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(150, audioContext.currentTime + 0.3);
+    
+    gain.gain.setValueAtTime(0, audioContext.currentTime);
+    gain.gain.linearRampToValueAtTime(0.3, audioContext.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.5);
+    
+    // Play the sound
+    osc.start();
+    osc.stop(audioContext.currentTime + 0.5);
+  } catch (error) {
+    console.error("Error playing hole sound:", error);
+  }
   
   // Animation function
   function animateBallSink() {
@@ -1663,6 +1713,12 @@ function showGameComplete() {
 // Direction indicator
 let directionArrow;
 function createDirectionIndicator() {
+  // Remove any existing direction arrow
+  if (directionArrow) {
+    scene.remove(directionArrow);
+    directionArrow = null;
+  }
+  
   // Create arrow components
   const arrowLength = 1;
   const arrowHeadSize = 0.2;
@@ -1677,46 +1733,49 @@ function createDirectionIndicator() {
   headGeometry.rotateX(Math.PI / 2); // Make it point forward
   headGeometry.translate(0, 0, arrowLength); // Position at end of body
   
-  // Load the BufferGeometryUtils library
-  const script = document.createElement('script');
-  script.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/examples/js/utils/BufferGeometryUtils.js';
-  script.onload = function() {
-    // Once the script is loaded, merge the geometries
-    const combinedGeometry = THREE.BufferGeometryUtils.mergeBufferGeometries([
-      bodyGeometry, 
-      headGeometry
-    ]);
+  // Create simple arrow without BufferGeometryUtils dependency
+  const arrowMaterial = new THREE.MeshStandardMaterial({ 
+    color: 0xff0000,
+    transparent: true,
+    opacity: 0.7
+  });
+  
+  try {
+    // First try to create arrow with merged geometry if BufferGeometryUtils is available
+    if (typeof THREE.BufferGeometryUtils !== 'undefined' && 
+        typeof THREE.BufferGeometryUtils.mergeBufferGeometries === 'function') {
+      
+      const combinedGeometry = THREE.BufferGeometryUtils.mergeBufferGeometries([
+        bodyGeometry, 
+        headGeometry
+      ]);
+      
+      directionArrow = new THREE.Mesh(combinedGeometry, arrowMaterial);
+    } else {
+      // If BufferGeometryUtils is not available, create a group
+      directionArrow = new THREE.Group();
+      
+      const bodyMesh = new THREE.Mesh(bodyGeometry, arrowMaterial);
+      const headMesh = new THREE.Mesh(headGeometry, arrowMaterial);
+      
+      directionArrow.add(bodyMesh);
+      directionArrow.add(headMesh);
+    }
     
-    // Create material and mesh
-    const arrowMaterial = new THREE.MeshStandardMaterial({ 
-      color: 0xff0000,
-      transparent: true,
-      opacity: 0.7
-    });
-    
-    directionArrow = new THREE.Mesh(combinedGeometry, arrowMaterial);
     directionArrow.visible = false; // Initially hidden
     scene.add(directionArrow);
-  };
-  
-  document.head.appendChild(script);
-  
-  // As a fallback in case the loading fails, create a simple arrow
-  // using just the body cylinder
-  setTimeout(() => {
-    if (!directionArrow) {
-      console.log("Creating fallback direction arrow");
-      const arrowMaterial = new THREE.MeshStandardMaterial({ 
-        color: 0xff0000,
-        transparent: true,
-        opacity: 0.7
-      });
-      
-      directionArrow = new THREE.Mesh(bodyGeometry, arrowMaterial);
-      directionArrow.visible = false;
-      scene.add(directionArrow);
-    }
-  }, 1000);
+    
+    console.log("Direction indicator created successfully");
+  } catch (error) {
+    console.error("Error creating direction indicator:", error);
+    
+    // Basic fallback arrow
+    const basicArrowGeometry = new THREE.CylinderGeometry(0.02, 0.02, arrowLength, 8);
+    basicArrowGeometry.rotateX(Math.PI / 2);
+    directionArrow = new THREE.Mesh(basicArrowGeometry, arrowMaterial);
+    directionArrow.visible = false;
+    scene.add(directionArrow);
+  }
 }
 
 // Add better camera info display
@@ -1809,8 +1868,13 @@ function updateCamera() {
 
 let lastDirectionData = null;
 function updateDirectionArrow(directionData) {
+  // Make sure direction arrow exists
+  if (!directionArrow) {
+    createDirectionIndicator();
+  }
+  
   // Only proceed if the arrow exists and the ball is not in motion
-  if (!directionArrow || ballInMotion) return;
+  if (!directionArrow || ballInMotion || courseCompleted) return;
   
   // Store this data for use when actually putting
   lastDirectionData = directionData;
@@ -1839,10 +1903,27 @@ function updateDirectionArrow(directionData) {
   const maxScale = 2.0;
   const powerScale = minScale + (Math.min(magnitude / 20, 1) * (maxScale - minScale));
   
-  directionArrow.scale.z = powerScale;
+  // Apply scale
+  if (directionArrow instanceof THREE.Group) {
+    // If it's a group, scale the whole group
+    directionArrow.scale.set(1, 1, powerScale);
+  } else {
+    // If it's a mesh, scale just the z axis
+    directionArrow.scale.z = powerScale;
+  }
   
-  // Make arrow visible
+  // Make arrow visible with higher opacity for better visibility
   directionArrow.visible = true;
+  if (directionArrow.material) {
+    directionArrow.material.opacity = 0.9;
+  } else if (directionArrow.children) {
+    // Update materials for all children
+    directionArrow.children.forEach(child => {
+      if (child.material) {
+        child.material.opacity = 0.9;
+      }
+    });
+  }
 }
 
 // Socket.io connection
@@ -1877,19 +1958,52 @@ const resetDelay = 8000; // 8 seconds before ball auto-resets if stuck
 
 // Function to reset the ball to the tee
 function resetBall() {
-  if (!window.ballBody || !window.teePosition) return;
+  if (!window.ballBody) {
+    console.error("Cannot reset ball: Ball physics body doesn't exist");
+    return;
+  }
   
+  if (!window.teePosition) {
+    console.error("Cannot reset ball: Tee position is undefined");
+    return;
+  }
+  
+  console.log("Resetting ball to:", window.teePosition);
+  
+  // Stop any motion and mark as not in motion
   ballInMotion = false;
-  // Reset position and velocity
-  window.ballBody.position.set(window.teePosition.x, 0.5, window.teePosition.z);
-  window.ballBody.velocity.set(0, 0, 0);
-  window.ballBody.angularVelocity.set(0, 0, 0);
-  // Make sure it's awake
-  window.ballBody.wakeUp();
   
-  // Update UI
-  if (puttFeedback) {
-    puttFeedback.textContent = 'Ball reset. Ready for next shot';
+  // Reset position, velocity, and wake the body
+  try {
+    // Reset position with extra height to avoid terrain penetration
+    window.ballBody.position.set(window.teePosition.x, 1.0, window.teePosition.z);
+    window.ballBody.velocity.set(0, 0, 0);
+    window.ballBody.angularVelocity.set(0, 0, 0);
+    
+    // Make sure it's awake
+    window.ballBody.wakeUp();
+    
+    // Reset any scale changes that might have been applied
+    if (window.ballMesh) {
+      window.ballMesh.scale.set(1, 1, 1);
+    }
+    
+    // Update visual mesh position to match physics body
+    if (window.ballMesh) {
+      window.ballMesh.position.copy(window.ballBody.position);
+    }
+    
+    // Update UI
+    if (puttFeedback) {
+      puttFeedback.textContent = 'Ball reset. Ready for next shot';
+    }
+    
+    // Reset hole in progress flag if it was set
+    window.holeInProgress = false;
+    
+    console.log("Ball reset complete");
+  } catch (error) {
+    console.error("Error resetting ball:", error);
   }
 }
 // Function to reset the ball to its current position (stop it without moving it)
@@ -2014,25 +2128,25 @@ function handlePutt(velocityDevice) {
     }
   }
   
-  // GREATLY REDUCED force scaling - more subtle control for golf putting
-  // Scale factor based on the magnitude of the input - REDUCED BY FACTOR OF 4-5
-  const minForce = 1.0;  // Much lower minimum force (was 5)
-  const maxForce = 4.0;  // Much lower maximum force (was 20)
+  // MODIFIED POWER SCALING - more moderate and predictable
+  // Scale factor based on the magnitude of the input
+  const minForce = 0.5;  // Lower minimum force
+  const maxForce = 3.0;  // Lower maximum force
   
-  // Use a non-linear (quadratic) mapping for better control of force
-  // This gives more precision for gentle putts while still allowing stronger putts
-  const normalizedMagnitude = Math.min(velocityMagnitude / 20, 1);
-  const forceMagnitude = minForce + (normalizedMagnitude * normalizedMagnitude) * (maxForce - minForce);
+  // Use a more linear mapping for better control
+  const normalizedMagnitude = Math.min(velocityMagnitude / 30, 1); // Increased from 20 to 30
+  const forceMagnitude = minForce + normalizedMagnitude * (maxForce - minForce);
+  
+  console.log("Applying putt with force magnitude:", forceMagnitude);
+  console.log("Based on velocity magnitude:", velocityMagnitude);
   
   // Create the final velocity vector with reduced force
   const vGame = new CANNON.Vec3(
     direction.x * forceMagnitude,
-    0.1, // Reduced upward component
+    0.05, // Even smaller upward component for flatter shots
     direction.z * forceMagnitude
   );
   
-  console.log("Applying putt with force magnitude:", forceMagnitude, "(reduced scale)");
-  console.log("Putt direction:", direction);
   console.log("Final velocity vector:", vGame);
   
   // Clear any existing velocity
@@ -2051,7 +2165,7 @@ function handlePutt(velocityDevice) {
   }
   
   // Visual feedback
-  puttFeedback.textContent = `Putt power: ${Math.round(forceMagnitude * 25)}%`; // Show as percentage
+  puttFeedback.textContent = `Putt power: ${Math.round(normalizedMagnitude * 100)}%`; // Show as percentage
   
   // Update ball state and stroke count
   ballInMotion = true;
