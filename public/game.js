@@ -51,89 +51,89 @@ const poleMatrial = new THREE.MeshStandardMaterial({ color: 0xCCCCCC });
 
 // Create a course with terrain features
 function createCourse(courseNumber) {
-  // Clear existing course
-  clearCourse();
-  
-  // Reset course state
-  courseCompleted = false;
-  strokeCount = 0;
-  
-  // Set par based on course difficulty
-  par = 2 + Math.floor(courseNumber / 2);
-  
-  // Create the base green
-  const courseSize = { width: 8, length: 16 };
-  const groundGeometry = new THREE.PlaneGeometry(courseSize.width, courseSize.length, 64, 128);
-  const groundMesh = new THREE.Mesh(groundGeometry, greenMaterial);
-  groundMesh.rotation.x = -Math.PI / 2;
-  groundMesh.receiveShadow = true;
-  scene.add(groundMesh);
-  
-  // Apply random terrain deformations based on course number
-  const terrainComplexity = 0.1 + (courseNumber * 0.05); // Increase complexity with course number
-  const vertices = groundGeometry.attributes.position.array;
-  
-  // Create a different seed for each course
-  const seed = courseNumber * 1000;
-  
-  // Apply terrain deformations
-  for (let i = 0; i < vertices.length; i += 3) {
-    if (i % 3 === 1) { // Only modify y values (height)
-      // Create several noise functions for more varied terrain
-      const noise1 = simplex(vertices[i-1] * 0.1 + seed, vertices[i+1] * 0.1 + seed) * terrainComplexity;
-      const noise2 = simplex(vertices[i-1] * 0.2 + seed + 100, vertices[i+1] * 0.2 + seed + 100) * terrainComplexity * 0.5;
-      
-      // Keep the starting and hole areas flatter
-      const distFromStart = Math.sqrt(Math.pow(vertices[i-1] - 0, 2) + Math.pow(vertices[i+1] - (-courseSize.length/2 + 1), 2));
-      const distFromHole = Math.sqrt(Math.pow(vertices[i-1] - 0, 2) + Math.pow(vertices[i+1] - (courseSize.length/2 - 1), 2));
-      
-      // Apply less deformation near the start and hole
-      let deformation = noise1 + noise2;
-      if (distFromStart < 1.5) {
-        deformation *= distFromStart / 1.5;
+    // Clear existing course
+    clearCourse();
+    
+    // Reset course state
+    courseCompleted = false;
+    strokeCount = 0;
+    
+    // Set par based on course difficulty
+    par = 2 + Math.floor(courseNumber / 2);
+    
+    // Create the base green
+    const courseSize = { width: 8, length: 16 };
+    const groundGeometry = new THREE.PlaneGeometry(courseSize.width, courseSize.length, 64, 128);
+    const groundMesh = new THREE.Mesh(groundGeometry, greenMaterial);
+    groundMesh.rotation.x = -Math.PI / 2;
+    groundMesh.receiveShadow = true;
+    scene.add(groundMesh);
+    
+    // Apply random terrain deformations based on course number
+    const terrainComplexity = 0.1 + (courseNumber * 0.05); // Increase complexity with course number
+    const vertices = groundGeometry.attributes.position.array;
+    
+    // Create a different seed for each course
+    const seed = courseNumber * 1000;
+    
+    // Apply terrain deformations
+    for (let i = 0; i < vertices.length; i += 3) {
+      if (i % 3 === 1) { // Only modify y values (height)
+        // Create several noise functions for more varied terrain
+        const noise1 = simplex(vertices[i-1] * 0.1 + seed, vertices[i+1] * 0.1 + seed) * terrainComplexity;
+        const noise2 = simplex(vertices[i-1] * 0.2 + seed + 100, vertices[i+1] * 0.2 + seed + 100) * terrainComplexity * 0.5;
+        
+        // Keep the starting and hole areas flatter
+        const distFromStart = Math.sqrt(Math.pow(vertices[i-1] - 0, 2) + Math.pow(vertices[i+1] - (-courseSize.length/2 + 1), 2));
+        const distFromHole = Math.sqrt(Math.pow(vertices[i-1] - 0, 2) + Math.pow(vertices[i+1] - (courseSize.length/2 - 1), 2));
+        
+        // Apply less deformation near the start and hole
+        let deformation = noise1 + noise2;
+        if (distFromStart < 1.5) {
+          deformation *= distFromStart / 1.5;
+        }
+        if (distFromHole < 1) {
+          deformation *= distFromHole;
+        }
+        
+        vertices[i] = deformation;
       }
-      if (distFromHole < 1) {
-        deformation *= distFromHole;
-      }
-      
-      vertices[i] = deformation;
     }
+    
+    // Update the geometry to reflect the terrain changes
+    groundGeometry.attributes.position.needsUpdate = true;
+    groundGeometry.computeVertexNormals();
+    
+    // Create heightfield shape for physics based on the deformed geometry
+    const heightfieldData = [];
+    const heightfieldShape = createHeightfieldFromGeometry(groundGeometry, courseSize);
+    
+    // Create the physics body for the ground
+    const groundBody = new CANNON.Body({ mass: 0 });
+    groundBody.addShape(heightfieldShape);
+    world.addBody(groundBody);
+    
+    // Add the hole (cup)
+    createHole(0, courseSize.length/2 - 1);
+    
+    // Add tee marker
+    createTeeMarker(0, -courseSize.length/2 + 1);
+    
+    // Add boundaries
+    createBoundaries(courseSize);
+    
+    // Create ball at the tee position (IMPORTANT: Create ball before obstacles that need to reference it)
+    createBall(0, 0.5, -courseSize.length/2 + 1);
+    
+    // Add obstacles based on course number (Now the ball exists when this runs)
+    addObstacles(courseNumber, courseSize);
+    
+    // Update stroke counter display
+    updateStrokeDisplay();
+    
+    // Update the course info
+    updateCourseInfo(courseNumber + 1, totalCourses, par);
   }
-  
-  // Update the geometry to reflect the terrain changes
-  groundGeometry.attributes.position.needsUpdate = true;
-  groundGeometry.computeVertexNormals();
-  
-  // Create heightfield shape for physics based on the deformed geometry
-  const heightfieldData = [];
-  const heightfieldShape = createHeightfieldFromGeometry(groundGeometry, courseSize);
-  
-  // Create the physics body for the ground
-  const groundBody = new CANNON.Body({ mass: 0 });
-  groundBody.addShape(heightfieldShape);
-  world.addBody(groundBody);
-  
-  // Add the hole (cup)
-  createHole(0, courseSize.length/2 - 1);
-  
-  // Add tee marker
-  createTeeMarker(0, -courseSize.length/2 + 1);
-  
-  // Add obstacles based on course number
-  addObstacles(courseNumber, courseSize);
-  
-  // Create ball at the tee position
-  createBall(0, 0.5, -courseSize.length/2 + 1);
-  
-  // Add boundaries
-  createBoundaries(courseSize);
-  
-  // Update stroke counter display
-  updateStrokeDisplay();
-  
-  // Update the course info
-  updateCourseInfo(courseNumber + 1, totalCourses, par);
-}
 
 // Simplified Perlin Noise function for terrain generation
 function simplex(x, y) {
@@ -372,8 +372,8 @@ function createBoundaries(courseSize) {
     sandMesh.receiveShadow = true;
     scene.add(sandMesh);
     
-    // Physics - we'll use a material with higher friction for sand
-    const sandMaterial = new CANNON.Material({
+    // Create a physics material for the sand (Define it here instead of reusing a variable)
+    const sandPhysicsMaterial = new CANNON.Material({
       friction: 0.9, // High friction to slow ball
       restitution: 0.1 // Low bounce
     });
@@ -387,19 +387,21 @@ function createBoundaries(courseSize) {
     const sandShape = new CANNON.Cylinder(size, size, 0.1, 16);
     sandBody.addShape(sandShape);
     sandBody.position.set(x, 0.05, z);
-    sandBody.material = sandMaterial;
+    sandBody.material = sandPhysicsMaterial;
     world.addBody(sandBody);
     
     // Create contact material between ball and sand
-    const ballSandContactMaterial = new CANNON.ContactMaterial(
-      window.ballBody.material,
-      sandMaterial,
-      {
-        friction: 0.9,
-        restitution: 0.1
-      }
-    );
-    world.addContactMaterial(ballSandContactMaterial);
+    if (window.ballBody && window.ballBody.material) {
+      const ballSandContactMaterial = new CANNON.ContactMaterial(
+        window.ballBody.material,
+        sandPhysicsMaterial,
+        {
+          friction: 0.9,
+          restitution: 0.1
+        }
+      );
+      world.addContactMaterial(ballSandContactMaterial);
+    }
   }
   
   // Create a hill obstacle
@@ -581,7 +583,7 @@ function createBoundaries(courseSize) {
   
   // Check if ball is in hole
   function checkBallInHole() {
-    if (courseCompleted) return;
+    if (courseCompleted || !window.ballBody || window.holeCenterX === undefined || window.holeCenterZ === undefined) return;
     
     const ballPos = window.ballBody.position;
     const holeX = window.holeCenterX;
@@ -701,6 +703,9 @@ function showGameComplete() {
   
   // Reset ball if it gets stuck
   function checkBallReset() {
+    // Make sure ball exists before accessing its properties
+    if (!window.ballBody) return;
+    
     const pos = window.ballBody.position;
     const vel = window.ballBody.velocity;
     const speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z);
@@ -725,13 +730,15 @@ function showGameComplete() {
         !courseCompleted) {
       
       // Only reset if ball hasn't reached the hole
-      const dx = pos.x - window.holeCenterX;
-      const dz = pos.z - window.holeCenterZ;
-      const distToHole = Math.sqrt(dx*dx + dz*dz);
-      
-      if (distToHole > 0.2) {
-        ballInMotion = false;
-        puttFeedback.textContent = 'Ready for next shot';
+      if (window.holeCenterX !== undefined && window.holeCenterZ !== undefined) {
+        const dx = pos.x - window.holeCenterX;
+        const dz = pos.z - window.holeCenterZ;
+        const distToHole = Math.sqrt(dx*dx + dz*dz);
+        
+        if (distToHole > 0.2) {
+          ballInMotion = false;
+          puttFeedback.textContent = 'Ready for next shot';
+        }
       }
     }
   }
@@ -797,6 +804,16 @@ function showGameComplete() {
     
     // Initialize first course
     createCourse(currentCourse);
+    
+    // Hide loading overlay once the course is created
+    const loadingOverlay = document.getElementById('loadingOverlay');
+    if (loadingOverlay) {
+      loadingOverlay.style.opacity = '0';
+      loadingOverlay.style.transition = 'opacity 0.5s';
+      setTimeout(function() {
+        loadingOverlay.style.display = 'none';
+      }, 500);
+    }
   });
   
   socket.on('roomError', (data) => {
