@@ -312,11 +312,153 @@ function createCourse(courseNumber) {
     addFlatGround(courseSize);
 }
 
+function addObstacleDebugger() {
+  // Add this function to the end of createCourse() function
+  // Create small markers to show where obstacles are placed
+  const debugObjects = [];
+  
+  // Add a visible debug marker for obstacles
+  if (window.debugObstacles) {
+    scene.remove(window.debugObstacles);
+  }
+  
+  // Create a group to hold all debug objects
+  window.debugObstacles = new THREE.Group();
+  scene.add(window.debugObstacles);
+  
+  // Function to add a debug marker
+  function addDebugMarker(x, y, z, color, type) {
+    const markerGeometry = new THREE.SphereGeometry(0.1, 8, 8);
+    const markerMaterial = new THREE.MeshBasicMaterial({ color: color });
+    const marker = new THREE.Mesh(markerGeometry, markerMaterial);
+    marker.position.set(x, y + 0.5, z); // Position slightly above ground
+    window.debugObstacles.add(marker);
+    
+    // Add text label
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 32;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = 'white';
+    ctx.font = '12px Arial';
+    ctx.fillText(type, 4, 20);
+    
+    const texture = new THREE.CanvasTexture(canvas);
+    const labelMaterial = new THREE.SpriteMaterial({ map: texture });
+    const label = new THREE.Sprite(labelMaterial);
+    label.position.set(x, y + 0.7, z);
+    label.scale.set(0.5, 0.25, 1);
+    window.debugObstacles.add(label);
+  }
+  
+  // Add debug markers for all obstacles
+  for (const obstacle of window.obstaclePositions || []) {
+    addDebugMarker(
+      obstacle.x, 
+      obstacle.y || 0, 
+      obstacle.z, 
+      obstacle.type === 'hill' ? 0x00FF00 : 
+      obstacle.type === 'sand' ? 0xFFFF00 : 0xFF0000,
+      obstacle.type
+    );
+  }
+}
+
+
+function addObstacles(courseNumber, courseSize) {
+  const numObstacles = Math.min(courseNumber + 1, 5);
+  
+  // Create array to store obstacle positions
+  window.obstaclePositions = [];
+  
+  for (let i = 0; i < numObstacles; i++) {
+    // Determine obstacle type based on index and course
+    const obstacleType = (i + courseNumber) % 3;
+    
+    // Calculate a position that's not too close to the tee or hole
+    let x, z;
+    let validPosition = false;
+    
+    // IMPROVED ALGORITHM: Create a clear path down the center
+    while (!validPosition) {
+      // Modified to avoid center line - create a path in the middle
+      const centerLineWidth = 1.5; // Width of the clear path
+      let offsetX;
+      
+      // Determine which side of the course to place obstacle
+      if (Math.random() > 0.5) {
+        // Right side
+        offsetX = centerLineWidth/2 + Math.random() * ((courseSize.width/2) - centerLineWidth/2 - 0.5);
+      } else {
+        // Left side
+        offsetX = -centerLineWidth/2 - Math.random() * ((courseSize.width/2) - centerLineWidth/2 - 0.5);
+      }
+      
+      x = offsetX;
+      z = (Math.random() - 0.5) * (courseSize.length - 2);
+      
+      // Check distance from tee and hole
+      const distToTee = Math.sqrt(Math.pow(x - 0, 2) + Math.pow(z - (-courseSize.length/2 + 1), 2));
+      const distToHole = Math.sqrt(Math.pow(x - 0, 2) + Math.pow(z - (courseSize.length/2 - 1), 2));
+      
+      if (distToTee > 1.5 && distToHole > 1.5) {
+        validPosition = true;
+      }
+    }
+    
+    // Store obstacle position for debugging
+    window.obstaclePositions.push({
+      x, z, 
+      type: obstacleType === 0 ? 'sand' : obstacleType === 1 ? 'hill' : 'barrier'
+    });
+    
+    // Create obstacle based on type
+    switch (obstacleType) {
+      case 0: // Sand trap
+        createSandTrap(x, z, 0.6 + Math.random() * 0.4);
+        break;
+      case 1: // Small hill
+        createHill(x, z, 0.3 + Math.random() * 0.2);
+        break;
+      case 2: // Barrier
+        createBarrier(x, z, 0.8 + Math.random() * 0.6);
+        break;
+    }
+  }
+  
+  // Add debug visualization of obstacles
+  addObstacleDebugger();
+}
+
+function addDebugToggleButton() {
+  const debugButton = document.createElement('button');
+  debugButton.textContent = 'Toggle Debug View';
+  debugButton.style.position = 'absolute';
+  debugButton.style.bottom = '120px';
+  debugButton.style.left = '20px';
+  debugButton.style.padding = '8px 12px';
+  debugButton.style.backgroundColor = 'rgba(255, 0, 0, 0.7)';
+  debugButton.style.color = 'white';
+  debugButton.style.border = 'none';
+  debugButton.style.borderRadius = '5px';
+  debugButton.style.cursor = 'pointer';
+  
+  debugButton.addEventListener('click', function() {
+    if (window.debugObstacles) {
+      window.debugObstacles.visible = !window.debugObstacles.visible;
+      debugButton.style.backgroundColor = window.debugObstacles.visible ? 
+        'rgba(0, 255, 0, 0.7)' : 'rgba(255, 0, 0, 0.7)';
+    }
+  });
+  
+  document.body.appendChild(debugButton);
+}
+
 // Simplified Perlin Noise function for terrain generation
 function simplex(x, y) {
-  // Simple pseudo-noise function
-  return Math.sin(x * 0.1) * Math.cos(y * 0.1) * 2 +
-         Math.sin(x * 0.4 + 0.5) * Math.cos(y * 0.3) * 0.8;
+  // Reduced amplitude of the terrain variations
+  return (Math.sin(x * 0.1) * Math.cos(y * 0.1) * 1.0 + // Reduced from 2.0
+         Math.sin(x * 0.4 + 0.5) * Math.cos(y * 0.3) * 0.4); // Reduced from 0.8
 }
 
 // Create a heightfield shape from a THREE.js geometry
@@ -693,70 +835,70 @@ function checkBallReset() {
 
 // Improve the createBoundaries function for stronger collision detection
 function createBoundaries(courseSize) {
-    const boundaryHeight = 0.5;         // Increased from 0.3
-    const boundaryThickness = 0.4;      // Increased from 0.2
+  const boundaryHeight = 0.5;
+  const boundaryThickness = 0.4;
+  
+  // Create a boundary helper function
+  function createBoundary(x, y, z, width, depth) {
+    const boundaryGeom = new THREE.BoxGeometry(width, boundaryHeight, depth);
+    const boundaryMesh = new THREE.Mesh(boundaryGeom, roughMaterial);
+    boundaryMesh.position.set(x, y + boundaryHeight/2, z);
+    boundaryMesh.castShadow = true;
+    boundaryMesh.receiveShadow = true;
+    scene.add(boundaryMesh);
     
-    // Create a boundary helper function
-    function createBoundary(x, y, z, width, depth) {
-      const boundaryGeom = new THREE.BoxGeometry(width, boundaryHeight, depth);
-      const boundaryMesh = new THREE.Mesh(boundaryGeom, roughMaterial);
-      boundaryMesh.position.set(x, y + boundaryHeight/2, z);
-      boundaryMesh.castShadow = true;
-      boundaryMesh.receiveShadow = true;
-      scene.add(boundaryMesh);
-      
-      // Physics body with material properties
-      const boundaryBody = new CANNON.Body({ 
-        mass: 0,
-        material: new CANNON.Material('boundaryMaterial') 
-      });
-      
-      boundaryBody.addShape(new CANNON.Box(new CANNON.Vec3(width/2, boundaryHeight/2, depth/2)));
-      boundaryBody.position.set(x, y + boundaryHeight/2, z);
-      world.addBody(boundaryBody);
-      
-      // Create contact material between ball and boundary
-      if (window.ballBody && window.ballBody.material) {
-        const ballBoundaryContact = new CANNON.ContactMaterial(
-          window.ballBody.material,
-          boundaryBody.material,
-          {
-            friction: 0.3,
-            restitution: 0.5,       // Higher restitution for bounce off walls
-            contactEquationStiffness: 1e8,
-            contactEquationRelaxation: 3
-          }
-        );
-        world.addContactMaterial(ballBoundaryContact);
-      }
+    // Physics body with material properties
+    const boundaryBody = new CANNON.Body({ 
+      mass: 0,
+      material: new CANNON.Material('boundaryMaterial') 
+    });
+    
+    boundaryBody.addShape(new CANNON.Box(new CANNON.Vec3(width/2, boundaryHeight/2, depth/2)));
+    boundaryBody.position.set(x, y + boundaryHeight/2, z);
+    world.addBody(boundaryBody);
+    
+    // Create contact material between ball and boundary
+    if (window.ballBody && window.ballBody.material) {
+      const ballBoundaryContact = new CANNON.ContactMaterial(
+        window.ballBody.material,
+        boundaryBody.material,
+        {
+          friction: 0.3,
+          restitution: 0.5,
+          contactEquationStiffness: 1e8,
+          contactEquationRelaxation: 3
+        }
+      );
+      world.addContactMaterial(ballBoundaryContact);
     }
-    
-    // Create slightly larger boundaries to prevent ball from escaping
-    const extraPadding = 0.1;
-    
-    // Left boundary
-    createBoundary(-courseSize.width/2 - boundaryThickness/2, 0, 0, 
-                  boundaryThickness, courseSize.length + boundaryThickness*2 + extraPadding);
-    
-    // Right boundary
-    createBoundary(courseSize.width/2 + boundaryThickness/2, 0, 0, 
-                  boundaryThickness, courseSize.length + boundaryThickness*2 + extraPadding);
-    
-    // Top boundary
-    createBoundary(0, 0, courseSize.length/2 + boundaryThickness/2, 
-                  courseSize.width + boundaryThickness*2 + extraPadding, boundaryThickness);
-    
-    // Bottom boundary
-    createBoundary(0, 0, -courseSize.length/2 - boundaryThickness/2, 
-                  courseSize.width + boundaryThickness*2 + extraPadding, boundaryThickness);
-    
-    // Create invisible ceiling to prevent ball from jumping too high
-    const ceilingBody = new CANNON.Body({ mass: 0 });
-    const ceilingShape = new CANNON.Plane();
-    ceilingBody.addShape(ceilingShape);
-    ceilingBody.position.set(0, 3, 0); // 3 units above the ground
-    ceilingBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), Math.PI); // Flip to face down
-    world.addBody(ceilingBody);
+  }
+  
+  // Create the boundaries as before
+  const extraPadding = 0.1;
+  
+  // Left boundary
+  createBoundary(-courseSize.width/2 - boundaryThickness/2, 0, 0, 
+                boundaryThickness, courseSize.length + boundaryThickness*2 + extraPadding);
+  
+  // Right boundary
+  createBoundary(courseSize.width/2 + boundaryThickness/2, 0, 0, 
+                boundaryThickness, courseSize.length + boundaryThickness*2 + extraPadding);
+  
+  // Top boundary
+  createBoundary(0, 0, courseSize.length/2 + boundaryThickness/2, 
+                courseSize.width + boundaryThickness*2 + extraPadding, boundaryThickness);
+  
+  // Bottom boundary
+  createBoundary(0, 0, -courseSize.length/2 - boundaryThickness/2, 
+                courseSize.width + boundaryThickness*2 + extraPadding, boundaryThickness);
+  
+  // Create invisible ceiling to prevent ball from jumping too high - INCREASED HEIGHT
+  const ceilingBody = new CANNON.Body({ mass: 0 });
+  const ceilingShape = new CANNON.Plane();
+  ceilingBody.addShape(ceilingShape);
+  ceilingBody.position.set(0, 10, 0); // Increased from 3 to 10 units
+  ceilingBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), Math.PI); // Flip to face down
+  world.addBody(ceilingBody);
 }
 
 // Add obstacles based on course number
@@ -892,14 +1034,34 @@ function createHill(x, z, height) {
   hillMesh.castShadow = true;
   scene.add(hillMesh);
   
-  // Physics - use a sphere shape cut in half
-  const hillBody = new CANNON.Body({ mass: 0 });
-  const hillShape = new CANNON.Sphere(height * 2);
+  // Physics - use a sphere shape with a smoother collision response
+  const hillBody = new CANNON.Body({ 
+    mass: 0,
+    material: new CANNON.Material('hillMaterial')
+  });
   
-  // Position the sphere so half of it is below the ground
+  // Use a smaller collision shape than the visual one
+  const hillShape = new CANNON.Sphere(height * 1.5); // Reduced from height * 2
+  
+  // Position the sphere so more of it is below the ground
   hillBody.addShape(hillShape);
-  hillBody.position.set(x, -height, z);
+  hillBody.position.set(x, -height * 0.7, z); // More embedded in ground (was -height)
   world.addBody(hillBody);
+  
+  // Create contact material that allows smoother rolling over the hill
+  if (window.ballBody && window.ballBody.material) {
+    const ballHillContact = new CANNON.ContactMaterial(
+      window.ballBody.material,
+      hillBody.material,
+      {
+        friction: 0.2,        // Lower friction for smoother rolling
+        restitution: 0.3,     // Moderate bounce
+        contactEquationStiffness: 1e7,
+        contactEquationRelaxation: 4
+      }
+    );
+    world.addContactMaterial(ballHillContact);
+  }
 }
 
 // Create a barrier (wall obstacle)
