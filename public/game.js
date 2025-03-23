@@ -82,6 +82,24 @@ const holeMaterial = new THREE.MeshStandardMaterial({ color: 0x000000 });
 const flagMaterial = new THREE.MeshStandardMaterial({ color: 0xFF0000 });
 const poleMatrial = new THREE.MeshStandardMaterial({ color: 0xCCCCCC });
 
+// Golf-specific physics settings for more realistic putting
+function improvePhysicsSettings() {
+  // Reduce gravity slightly for golf to prevent too fast rolling on slopes
+  world.gravity.set(0, -9.0, 0); // Reduced from -9.82
+  
+  // Increase solver iterations for more stable and accurate physics
+  world.solver.iterations = 25; // Increased from 20
+  
+  // Adjust default contact material for better ball-green interaction
+  world.defaultContactMaterial.friction = 0.4;       // Increased from 0.3
+  world.defaultContactMaterial.restitution = 0.2;    // Reduced from 0.4
+  world.defaultContactMaterial.contactEquationStiffness = 1e8;
+  world.defaultContactMaterial.contactEquationRelaxation = 3;
+  
+  // Set smaller time step for more accurate physics
+  world.fixedTimeStep = 1/120;
+}
+
 // Create a button to toggle "follow ball" mode
 function setupFollowBallMode() {
   // Create the toggle button
@@ -202,12 +220,8 @@ function createCourse(courseNumber) {
     // Set par based on course difficulty
     par = 2 + Math.floor(courseNumber / 2);
     
-    // Improve physics settings
-    world.solver.iterations = 20; // More iterations for better stability
-    world.defaultContactMaterial.friction = 0.3;
-    world.defaultContactMaterial.restitution = 0.4;
-    world.defaultContactMaterial.contactEquationStiffness = 1e8;
-    world.defaultContactMaterial.contactEquationRelaxation = 3;
+    // Apply golf-specific physics settings
+    improvePhysicsSettings();
     
     // Create the base green
     const courseSize = { width: 8, length: 16 };
@@ -461,10 +475,10 @@ function createTeeMarker(x, z) {
     window.teePosition = { x, z };
 }
 
-// Create ball with improved physics and visibility
+// Create ball with improved physics for a golf ball
 function createBall(x, y, z) {
-  // Visual representation - larger ball with better materials
-  const ballRadius = 0.08; // Increased from 0.05
+  // Visual representation - no change to appearance
+  const ballRadius = 0.08;
   const ballGeometry = new THREE.SphereGeometry(ballRadius, 32, 32);
   
   // Create a more visible golf ball material with dimples
@@ -498,11 +512,14 @@ function createBall(x, y, z) {
   // Create a ball material with better physics properties
   const ballPhysMaterial = new CANNON.Material('ballMaterial');
   
-  // Physics body with improved parameters
+  // Physics body with improved parameters for a golf ball
+  // - Increased mass (from 0.045 to 0.15)
+  // - Increased linear damping for more rolling resistance
+  // - Increased angular damping to reduce excessive spinning
   const ballBody = new CANNON.Body({ 
-    mass: 0.045,
-    linearDamping: 0.5,
-    angularDamping: 0.5,
+    mass: 0.15,            // Increased mass for more stability and harder to move
+    linearDamping: 0.7,    // Increased from 0.5 for more rolling resistance
+    angularDamping: 0.8,   // Increased from 0.5 to reduce excessive spinning
     allowSleep: true,
     sleepSpeedLimit: 0.1,
     sleepTimeLimit: 1,
@@ -510,7 +527,7 @@ function createBall(x, y, z) {
   });
   
   ballBody.addShape(new CANNON.Sphere(ballRadius));
-  ballBody.position.set(x, y + 0.5, z); // Raise position further to prevent ground clipping
+  ballBody.position.set(x, y + 0.5, z); // Raise position to prevent ground clipping
   world.addBody(ballBody);
   
   // Create specific ground contact material with better parameters
@@ -519,8 +536,8 @@ function createBall(x, y, z) {
     ballPhysMaterial,
     groundMaterial,
     {
-      friction: 0.2,
-      restitution: 0.3,
+      friction: 0.3,         // Slight increase from 0.2 for more realistic roll
+      restitution: 0.2,      // Reduced from 0.3 for less bounce
       contactEquationStiffness: 1e8,
       contactEquationRelaxation: 3
     }
@@ -624,10 +641,10 @@ function checkBallReset() {
   }
 }
 
-// Create boundaries for the course
+// Improve the createBoundaries function for stronger collision detection
 function createBoundaries(courseSize) {
-    const boundaryHeight = 0.3;
-    const boundaryThickness = 0.2;
+    const boundaryHeight = 0.5;         // Increased from 0.3
+    const boundaryThickness = 0.4;      // Increased from 0.2
     
     // Create a boundary helper function
     function createBoundary(x, y, z, width, depth) {
@@ -638,24 +655,58 @@ function createBoundaries(courseSize) {
       boundaryMesh.receiveShadow = true;
       scene.add(boundaryMesh);
       
-      // Physics body
-      const boundaryBody = new CANNON.Body({ mass: 0 });
+      // Physics body with material properties
+      const boundaryBody = new CANNON.Body({ 
+        mass: 0,
+        material: new CANNON.Material('boundaryMaterial') 
+      });
+      
       boundaryBody.addShape(new CANNON.Box(new CANNON.Vec3(width/2, boundaryHeight/2, depth/2)));
       boundaryBody.position.set(x, y + boundaryHeight/2, z);
       world.addBody(boundaryBody);
+      
+      // Create contact material between ball and boundary
+      if (window.ballBody && window.ballBody.material) {
+        const ballBoundaryContact = new CANNON.ContactMaterial(
+          window.ballBody.material,
+          boundaryBody.material,
+          {
+            friction: 0.3,
+            restitution: 0.5,       // Higher restitution for bounce off walls
+            contactEquationStiffness: 1e8,
+            contactEquationRelaxation: 3
+          }
+        );
+        world.addContactMaterial(ballBoundaryContact);
+      }
     }
     
+    // Create slightly larger boundaries to prevent ball from escaping
+    const extraPadding = 0.1;
+    
     // Left boundary
-    createBoundary(-courseSize.width/2 - boundaryThickness/2, 0, 0, boundaryThickness, courseSize.length + boundaryThickness*2);
+    createBoundary(-courseSize.width/2 - boundaryThickness/2, 0, 0, 
+                  boundaryThickness, courseSize.length + boundaryThickness*2 + extraPadding);
     
     // Right boundary
-    createBoundary(courseSize.width/2 + boundaryThickness/2, 0, 0, boundaryThickness, courseSize.length + boundaryThickness*2);
+    createBoundary(courseSize.width/2 + boundaryThickness/2, 0, 0, 
+                  boundaryThickness, courseSize.length + boundaryThickness*2 + extraPadding);
     
     // Top boundary
-    createBoundary(0, 0, courseSize.length/2 + boundaryThickness/2, courseSize.width + boundaryThickness*2, boundaryThickness);
+    createBoundary(0, 0, courseSize.length/2 + boundaryThickness/2, 
+                  courseSize.width + boundaryThickness*2 + extraPadding, boundaryThickness);
     
     // Bottom boundary
-    createBoundary(0, 0, -courseSize.length/2 - boundaryThickness/2, courseSize.width + boundaryThickness*2, boundaryThickness);
+    createBoundary(0, 0, -courseSize.length/2 - boundaryThickness/2, 
+                  courseSize.width + boundaryThickness*2 + extraPadding, boundaryThickness);
+    
+    // Create invisible ceiling to prevent ball from jumping too high
+    const ceilingBody = new CANNON.Body({ mass: 0 });
+    const ceilingShape = new CANNON.Plane();
+    ceilingBody.addShape(ceilingShape);
+    ceilingBody.position.set(0, 3, 0); // 3 units above the ground
+    ceilingBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), Math.PI); // Flip to face down
+    world.addBody(ceilingBody);
 }
 
 // Add obstacles based on course number
@@ -1274,7 +1325,7 @@ socket.on('throw', (velocityDevice) => {
   handlePutt(velocityDevice);
 });
 
-// Improved putting mechanics
+// Refined putting mechanics - improved for golf-like behavior
 function handlePutt(velocityDevice) {
   console.log('Received putt data:', velocityDevice);
   
@@ -1313,20 +1364,24 @@ function handlePutt(velocityDevice) {
     }
   }
   
-  // Scale factor based on the magnitude of the input
-  // Adjust these values to get the right feel
-  const minForce = 5;  // Minimum force to apply
-  const maxForce = 20; // Maximum force to apply
-  const forceMagnitude = minForce + Math.min(velocityMagnitude / 10, 1) * (maxForce - minForce);
+  // GREATLY REDUCED force scaling - more subtle control for golf putting
+  // Scale factor based on the magnitude of the input - REDUCED BY FACTOR OF 4-5
+  const minForce = 1.0;  // Much lower minimum force (was 5)
+  const maxForce = 4.0;  // Much lower maximum force (was 20)
   
-  // Create the final velocity vector
+  // Use a non-linear (quadratic) mapping for better control of force
+  // This gives more precision for gentle putts while still allowing stronger putts
+  const normalizedMagnitude = Math.min(velocityMagnitude / 20, 1);
+  const forceMagnitude = minForce + (normalizedMagnitude * normalizedMagnitude) * (maxForce - minForce);
+  
+  // Create the final velocity vector with reduced force
   const vGame = new CANNON.Vec3(
     direction.x * forceMagnitude,
-    0.2, // Small upward component to help the ball get over small bumps
+    0.1, // Reduced upward component
     direction.z * forceMagnitude
   );
   
-  console.log("Applying putt with force magnitude:", forceMagnitude);
+  console.log("Applying putt with force magnitude:", forceMagnitude, "(reduced scale)");
   console.log("Putt direction:", direction);
   console.log("Final velocity vector:", vGame);
   
@@ -1346,7 +1401,7 @@ function handlePutt(velocityDevice) {
   }
   
   // Visual feedback
-  puttFeedback.textContent = `Putt power: ${Math.round(forceMagnitude)}`;
+  puttFeedback.textContent = `Putt power: ${Math.round(forceMagnitude * 25)}%`; // Show as percentage
   
   // Update ball state and stroke count
   ballInMotion = true;
