@@ -308,6 +308,8 @@ function createCourse(courseNumber) {
     
     // Make sure camera info is displayed
     addCameraInfo();
+
+    addFlatGround(courseSize);
 }
 
 // Simplified Perlin Noise function for terrain generation
@@ -480,84 +482,123 @@ function createTeeMarker(x, z) {
 
 // Create ball with improved physics for a golf ball
 function createBall(x, y, z) {
-  // Visual representation - no change to appearance
-  const ballRadius = 0.08;
-  const ballGeometry = new THREE.SphereGeometry(ballRadius, 32, 32);
-  
-  // Create a more visible golf ball material with dimples
-  const ballMaterial = new THREE.MeshStandardMaterial({ 
-    color: 0xFFFFFF,
-    emissive: 0xAAAAAA,
-    emissiveIntensity: 0.2,
-    roughness: 0.3,
-    metalness: 0.2
-  });
-  
-  const ballMesh = new THREE.Mesh(ballGeometry, ballMaterial);
-  ballMesh.castShadow = true;
-  ballMesh.receiveShadow = true;
-  
-  // Add a small highlight to make the ball more visible
-  const highlightGeometry = new THREE.SphereGeometry(ballRadius * 0.2, 16, 16);
-  const highlightMaterial = new THREE.MeshBasicMaterial({
-    color: 0xFFFFFF,
-    transparent: true,
-    opacity: 0.7
-  });
-  const highlight = new THREE.Mesh(highlightGeometry, highlightMaterial);
-  highlight.position.set(ballRadius * 0.4, ballRadius * 0.4, ballRadius * 0.4);
-  ballMesh.add(highlight);
-  
-  scene.add(ballMesh);
-  
-  console.log("Creating ball at position:", {x, y, z});
-  
-  // Create a ball material with better physics properties
-  const ballPhysMaterial = new CANNON.Material('ballMaterial');
-  
-  // Physics body with improved parameters for a golf ball
-  // - Increased mass (from 0.045 to 0.15)
-  // - Increased linear damping for more rolling resistance
-  // - Increased angular damping to reduce excessive spinning
-  const ballBody = new CANNON.Body({ 
-    mass: 0.15,            // Increased mass for more stability and harder to move
-    linearDamping: 0.7,    // Increased from 0.5 for more rolling resistance
-    angularDamping: 0.8,   // Increased from 0.5 to reduce excessive spinning
-    allowSleep: true,
-    sleepSpeedLimit: 0.1,
-    sleepTimeLimit: 1,
-    material: ballPhysMaterial
-  });
-  
-  ballBody.addShape(new CANNON.Sphere(ballRadius));
-  
-  // IMPORTANT: Position the ball higher above the ground
-  ballBody.position.set(x, y + 1.0, z); // Increased from 0.5 to 1.0
-  
-  world.addBody(ballBody);
-  
-  // Position the visual mesh to match the physics body
-  ballMesh.position.copy(ballBody.position);
-  
-  // Create specific ground contact material with better parameters
-  const groundMaterial = new CANNON.Material('groundMaterial');
-  const ballGroundContact = new CANNON.ContactMaterial(
-    ballPhysMaterial,
-    groundMaterial,
-    {
-      friction: 0.3,         // Slight increase from 0.2 for more realistic roll
-      restitution: 0.2,      // Reduced from 0.3 for less bounce
-      contactEquationStiffness: 1e8,
-      contactEquationRelaxation: 3
+    // Visual representation remains the same
+    const ballRadius = 0.08;
+    const ballGeometry = new THREE.SphereGeometry(ballRadius, 32, 32);
+    
+    const ballMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0xFFFFFF,
+      emissive: 0xAAAAAA,
+      emissiveIntensity: 0.2,
+      roughness: 0.3,
+      metalness: 0.2
+    });
+    
+    const ballMesh = new THREE.Mesh(ballGeometry, ballMaterial);
+    ballMesh.castShadow = true;
+    ballMesh.receiveShadow = true;
+    
+    // Add highlight for visibility
+    const highlightGeometry = new THREE.SphereGeometry(ballRadius * 0.2, 16, 16);
+    const highlightMaterial = new THREE.MeshBasicMaterial({
+      color: 0xFFFFFF,
+      transparent: true,
+      opacity: 0.7
+    });
+    const highlight = new THREE.Mesh(highlightGeometry, highlightMaterial);
+    highlight.position.set(ballRadius * 0.4, ballRadius * 0.4, ballRadius * 0.4);
+    ballMesh.add(highlight);
+    
+    scene.add(ballMesh);
+    
+    console.log("Creating ball at position:", {x, y, z});
+    
+    // Create ball physics material
+    const ballPhysMaterial = new CANNON.Material('ballMaterial');
+    
+    // Physics body with improved parameters
+    const ballBody = new CANNON.Body({ 
+      mass: 0.15,
+      linearDamping: 0.7,
+      angularDamping: 0.8,
+      allowSleep: true,
+      sleepSpeedLimit: 0.1,
+      sleepTimeLimit: 1,
+      material: ballPhysMaterial
+    });
+    
+    ballBody.addShape(new CANNON.Sphere(ballRadius));
+    
+    // KEY CHANGE: Position the ball much higher above the ground (3.0 units instead of 1.0)
+    ballBody.position.set(x, y + 3.0, z);
+    
+    world.addBody(ballBody);
+    
+    // Explicitly set the mesh position to match the physics body position
+    ballMesh.position.copy(ballBody.position);
+    
+    // Create contact materials
+    const groundMaterial = new CANNON.Material('groundMaterial');
+    const ballGroundContact = new CANNON.ContactMaterial(
+      ballPhysMaterial,
+      groundMaterial,
+      {
+        friction: 0.3,
+        restitution: 0.2,
+        contactEquationStiffness: 1e8,
+        contactEquationRelaxation: 3
+      }
+    );
+    world.addContactMaterial(ballGroundContact);
+    
+    // Add debug sphere to visualize physics position
+    const debugGeometry = new THREE.SphereGeometry(0.02, 16, 16);
+    const debugMaterial = new THREE.MeshBasicMaterial({ color: 0xFF0000 });
+    const debugSphere = new THREE.Mesh(debugGeometry, debugMaterial);
+    scene.add(debugSphere);
+    
+    // Store in window to update in animation loop
+    window.debugSphere = debugSphere;
+    
+    // Store references
+    window.ballMesh = ballMesh;
+    window.ballBody = ballBody;
+    window.ballRadius = ballRadius;
+    
+    console.log("Ball created with physics position:", ballBody.position);
+  }
+
+  function addFlatGround(courseSize) {
+    // Create a physics-only plane at y=0 as a reliable collision surface
+    const groundBody = new CANNON.Body({ mass: 0 });
+    const groundShape = new CANNON.Plane();
+    groundBody.addShape(groundShape);
+    
+    // Position at exactly y=0, facing up
+    groundBody.position.set(0, 0, 0);
+    groundBody.quaternion.setFromAxisAngle(new CANNON.Vec3(1, 0, 0), -Math.PI / 2);
+    
+    // Add material
+    groundBody.material = new CANNON.Material('flatGroundMaterial');
+    
+    world.addBody(groundBody);
+    console.log("Added flat ground plane at y=0");
+    
+    // Create contact material if ball exists
+    if (window.ballBody && window.ballBody.material) {
+      const ballFlatGroundContact = new CANNON.ContactMaterial(
+        window.ballBody.material,
+        groundBody.material,
+        {
+          friction: 0.3,
+          restitution: 0.2,
+          contactEquationStiffness: 1e8,
+          contactEquationRelaxation: 3
+        }
+      );
+      world.addContactMaterial(ballFlatGroundContact);
     }
-  );
-  world.addContactMaterial(ballGroundContact);
-  
-  // Store references to the ball objects
-  window.ballMesh = ballMesh;
-  window.ballBody = ballBody;
-  window.ballRadius = ballRadius;
-}
+  }
 
 // Create multiple safety floors at different heights
 function createSafetyFloor(courseSize) {
@@ -1283,13 +1324,15 @@ const resetDelay = 8000; // 8 seconds before ball auto-resets if stuck
 
 // Function to reset the ball to the tee
 function resetBall() {
-  ballInMotion = false;
-  // Position the ball higher above the tee
-  window.ballBody.position.set(window.teePosition.x, 1.0, window.teePosition.z); // Increased from 0.5 to 1.0
-  window.ballBody.velocity.set(0, 0, 0);
-  window.ballBody.angularVelocity.set(0, 0, 0);
-  puttFeedback.textContent = 'Ball reset. Ready for next shot';
-}
+    ballInMotion = false;
+    // Use a higher position (3.0 instead of 1.0)
+    window.ballBody.position.set(window.teePosition.x, 3.0, window.teePosition.z);
+    window.ballBody.velocity.set(0, 0, 0);
+    window.ballBody.angularVelocity.set(0, 0, 0);
+    // Make sure it's awake
+    window.ballBody.wakeUp();
+    puttFeedback.textContent = 'Ball reset. Ready for next shot';
+  }
 
 // Function to reset the ball to its current position (stop it without moving it)
 function stopBall() {
@@ -1486,6 +1529,15 @@ function animate() {
     window.controls.update();
   }
 
+  if (window.ballBody && window.debugSphere) {
+    // Update debug sphere position to match physics body
+    window.debugSphere.position.copy(window.ballBody.position);
+    
+    // Log the ball's y position when it's near/below ground level for debugging
+    if (window.ballBody.position.y < 0.1) {
+      console.log("Ball near/below ground. Position:", window.ballBody.position);
+    }
+  }
   renderer.render(scene, camera);
 }
 
