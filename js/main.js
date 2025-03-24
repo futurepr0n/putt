@@ -1,3 +1,7 @@
+const THREE = window.THREE;
+const CANNON = window.CANNON;
+const io = window.io;
+
 import { Game } from './core/Game.js';
 
 // Entry point for the application
@@ -12,9 +16,13 @@ document.addEventListener('DOMContentLoaded', () => {
     return;
   }
   
-  // Create and initialize the game
+  // Create game instance
   const game = new Game(roomId);
-  game.init();
+  
+  // Initialize the game after a slight delay to ensure DOM is ready
+  setTimeout(() => {
+    game.init();
+  }, 100);
   
   // Store game instance globally for debugging
   window.gameInstance = game;
