@@ -18,26 +18,29 @@ export class Game {
     // Initialize managers
     this.sceneManager = new SceneManager();
     this.physicsManager = new PhysicsManager();
+    
+    // Don't initialize these yet as they depend on the scene and physics
+    this.courseManager = null;
+    this.uiManager = null;
+    this.socketManager = null;
+    
+    // Bind methods
+    this.animate = this.animate.bind(this);
+    
+    // Start animation loop immediately
+    requestAnimationFrame(this.animate);
+  }
+  
+  init() {
+    // Now initialize the managers
+    this.sceneManager.init();
+    
+    // Initialize the dependent managers
     this.courseManager = new CourseManager(this.sceneManager, this.physicsManager);
     this.uiManager = new UIManager(this);
     this.socketManager = new SocketManager(this.roomId, this);
     
-    // Bind methods
-    this.animate = this.animate.bind(this);
-    this.resetBall = this.resetBall.bind(this);
-    this.handlePutt = this.handlePutt.bind(this);
-    
-    // Set up event listeners
-    this.setupEventListeners();
-    
-    // Start animation loop
-    this.animate();
-  }
-  
-  init() {
-    // Initialize the game
-    this.sceneManager.init();
-    this.physicsManager.init();
+    // Initialize them
     this.uiManager.init();
     this.socketManager.init();
     
@@ -46,42 +49,34 @@ export class Game {
     
     // Create first course
     this.createCourse(this.currentCourse);
-  }
-  
-  createCourse(courseNumber) {
-    // Reset course state
-    this.courseCompleted = false;
-    this.strokeCount = 0;
     
-    // Set par based on course difficulty
-    this.par = 2 + Math.floor(courseNumber / 2);
-    
-    // Clear existing course
-    this.courseManager.clearCourse();
-    
-    // Create new course
-    this.courseManager.createCourse(courseNumber, this.par);
-    
-    // Update UI
-    this.uiManager.updateStrokeDisplay(this.strokeCount);
-    this.uiManager.updateCourseInfo(courseNumber + 1, gameConfig.totalCourses, this.par);
+    // Set up event listeners
+    this.setupEventListeners();
   }
   
   animate() {
     requestAnimationFrame(this.animate);
     
-    // Step physics simulation
-    this.physicsManager.update();
+    // Only update physics after everything is initialized
+    if (this.physicsManager && this.physicsManager.world) {
+      this.physicsManager.update();
+    }
     
-    // Check game states
-    this.checkBallReset();
-    this.checkBallInHole();
+    // Check game states if initialized
+    if (this.courseManager) {
+      this.checkBallReset();
+      this.checkBallInHole();
+    }
     
-    // Update controls and camera
-    this.uiManager.update();
+    // Update UI if initialized
+    if (this.uiManager) {
+      this.uiManager.update();
+    }
     
     // Render scene
-    this.sceneManager.render();
+    if (this.sceneManager && this.sceneManager.renderer && this.sceneManager.scene && this.sceneManager.camera) {
+      this.sceneManager.render();
+    }
   }
   
   handlePutt(velocityData) {

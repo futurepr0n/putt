@@ -3,16 +3,7 @@ const THREE = window.THREE;
 
 export class SceneManager {
   constructor() {
-    this.scene = null;
-    this.camera = null;
-    this.renderer = null;
-    this.ambientLight = null;
-    this.directionalLight = null;
-    this.controls = null;
-  }
-  
-  init() {
-    // Create scene
+    // Initialize scene, camera, renderer immediately
     this.scene = new THREE.Scene();
     
     // Create camera with better initial position
@@ -29,6 +20,14 @@ export class SceneManager {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.shadowMap.enabled = true;
+    
+    this.ambientLight = null;
+    this.directionalLight = null;
+    this.controls = null;
+  }
+  
+  init() {
+    // Add renderer to document
     document.body.appendChild(this.renderer.domElement);
     
     // Add lighting
@@ -37,6 +36,9 @@ export class SceneManager {
     // Setup controls
     this.setupControls();
   }
+  
+
+
   
   setupLighting() {
     // Add ambient light

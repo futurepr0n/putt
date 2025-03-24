@@ -3,15 +3,18 @@ const CANNON = window.CANNON;
 
 export class PhysicsManager {
   constructor() {
-    this.world = null;
+    this.world = new CANNON.World(); // Initialize immediately in constructor
     this.bodies = [];
-    this.bodyToMesh = new Map(); // Maps physics bodies to visual meshes
+    this.bodyToMesh = new Map();
+    
+    // Set up physics immediately
+    this.setupPhysics();
   }
   
   init() {
-    // Create physics world
-    this.world = new CANNON.World();
-    this.setupPhysics();
+    // Now this is just a placeholder or can be used for additional setup
+    // that depends on other systems
+    console.log("PhysicsManager initialized");
   }
   
   setupPhysics() {
