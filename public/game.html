@@ -157,7 +157,7 @@
     <div style="margin-top: 20px;">Please wait</div>
   </div>
   
-  <!-- Preload all required scripts to ensure they're available before game.js executes -->
+  <!-- Preload all required libraries -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/examples/js/controls/OrbitControls.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/examples/js/utils/BufferGeometryUtils.js"></script>
@@ -180,7 +180,14 @@
         }
       }, 1500);
     });
+    
+    // Add click handler for closing info panel
+    document.getElementById('closeInfo').addEventListener('click', function() {
+      document.getElementById('gameInfo').classList.add('hidden');
+    });
   </script>
-  <script src="game.js"></script>
+  
+  <!-- Load main JS module -->
+  <script type="module" src="js/main.js"></script>
 </body>
 </html>
