@@ -1,4 +1,5 @@
-import * as CANNON from 'cannon';
+//import * as CANNON from 'cannon';
+const CANNON = window.CANNON;
 
 export class PhysicsManager {
   constructor() {
