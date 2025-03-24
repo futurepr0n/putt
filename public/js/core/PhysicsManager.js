@@ -1,4 +1,4 @@
-//import * as CANNON from 'cannon';
+//const CANNON = window.CANNON;
 const CANNON = window.CANNON;
 
 export class PhysicsManager {

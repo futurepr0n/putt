@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+const THREE = window.THREE;
 import { DomUtils } from '../utils/DomUtils.js';
 
 export class CameraControls {

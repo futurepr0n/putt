@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+const THREE = window.THREE;
 import { DomUtils } from './DomUtils.js';
 
 export class Debug {

@@ -1,5 +1,5 @@
-import * as THREE from 'three';
-import * as CANNON from 'cannon';
+const THREE = window.THREE;
+const CANNON = window.CANNON;
 
 export class SafetyFloor {
   constructor(sceneManager, physicsManager) {
