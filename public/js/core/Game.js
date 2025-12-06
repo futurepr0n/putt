@@ -13,7 +13,13 @@ export class Game {
     this.strokeCount = 0;
     this.ballInMotion = false;
     this.lastPuttTime = 0;
+    this.lastPuttTime = 0;
     this.courseCompleted = false;
+
+    // Aiming state
+    this.aimOffset = 0;
+    this.pendingSnap = false;
+    this.targetSnapAngle = 0;
 
     // Initialize managers
     this.sceneManager = new SceneManager();
@@ -221,12 +227,70 @@ export class Game {
   connectSocketEvents() {
     this.socketManager.on('orientation', (data) => {
       if (!this.ballInMotion && !this.courseCompleted) {
+
+        // Calculate Snap Offset if pending
+        if (this.pendingSnap) {
+          const inputAngle = Math.atan2(data.x, data.z);
+          // Offset = Target - Input
+          this.aimOffset = this.targetSnapAngle - inputAngle;
+          this.pendingSnap = false;
+        }
+
+        // Apply Snap-to-Pin offset
+        if (this.aimOffset !== 0) {
+          // Rotate the input vector by the offset angle
+          const inputAngle = Math.atan2(data.x, data.z);
+          const finalAngle = inputAngle + this.aimOffset;
+
+          const magnitude = Math.sqrt(data.x * data.x + data.z * data.z);
+          data.x = Math.sin(finalAngle) * magnitude;
+          data.z = Math.cos(finalAngle) * magnitude;
+        }
         this.uiManager.updateDirectionArrow(data);
+      }
+    });
+
+    this.socketManager.on('aim_start', () => {
+      this.handleAimStart();
+    });
+
+    this.socketManager.on('swing_data', (data) => {
+      if (!this.ballInMotion) {
+        this.uiManager.updateSwingVisuals(data);
       }
     });
 
     this.socketManager.on('throw', (velocityData) => {
       this.handlePutt(velocityData);
     });
+  }
+
+  handleAimStart() {
+    // Calculate angle to hole
+    const ballPos = this.courseManager.getBallPosition();
+    const holePos = this.courseManager.hole ? { x: this.courseManager.hole.holeCenterX, z: this.courseManager.hole.holeCenterZ } : null;
+
+    if (ballPos && holePos) {
+      // Vector from ball to hole
+      const dx = holePos.x - ballPos.x;
+      const dz = holePos.z - ballPos.z;
+      const angleToHole = Math.atan2(dx, dz);
+
+      // Current input angle (from the last orientation packet, or assume 0/Forward if undefined)
+      // Actually, we want to set the offset such that Input Angle + Offset = AngleToHole.
+      // Since we don't know the exact instantaneous input angle *right now* (it comes in stream),
+      // we can assume the user is holding it roughly "forward" (0) when they tap aim, 
+      // OR better: we wait for the first orientation packet after aim_start to set the offset.
+      // But to be snappy, let's assume the current stream data is "Forward".
+
+      // Let's rely on the NEXT orientation packet to set the offset? 
+      // or just assume 0 if we haven't received data. 
+      // Ideally, we want the *Result* of the next update to be AngleToHole.
+      // So Offset = AngleToHole - InputAngle.
+
+      // We'll set a flag to calculate offset on next orientation pulse
+      this.pendingSnap = true;
+      this.targetSnapAngle = angleToHole;
+    }
   }
 }

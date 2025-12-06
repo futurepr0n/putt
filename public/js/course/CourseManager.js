@@ -237,21 +237,25 @@ export class CourseManager {
     const dz = ballPos.z - holeZ;
     const distance = Math.sqrt(dx * dx + dz * dz);
 
-    // Check if ball is close enough to hole center and moving slowly
+    // Check if ball is closer enough to hole center and moving
     const velocity = this.ball.ballBody.velocity;
     const horizontalSpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
 
-    // Apply gentle attraction when ball is near the hole
-    // Apply gentle attraction when ball is near the hole (Magnetism)
-    // Apply gentle attraction when ball is near the hole (Magnetism)
-    // Increased range to match larger hole and ensure smooth entry
-    const magnetismRange = this.hole.holeRadius * 4; // Increased from 3 to 4
+    // Dynamic Magnetism: Stronger suction when close, wider range
+    const magnetismRange = this.hole.holeRadius * 5; // Wide collection area (was 4)
 
-    if (distance < magnetismRange && horizontalSpeed < 5 && ballPos.y < 0.2) { // Speed limit increased from 3 to 5
+    if (distance < magnetismRange && ballPos.y < 0.3) {
       // Calculate force direction toward hole
-      const forceFactor = 0.2 * (1 - distance / magnetismRange); // Stronger pull (0.2 instead of 0.05)
+      const forceFactor = distance < this.hole.holeRadius ? 0.8 : 0.3 * (1 - distance / magnetismRange);
+      // Very strong pull if ON TOP of hole (0.8), gentler further out
+
       const forceX = -dx * forceFactor;
       const forceZ = -dz * forceFactor;
+
+      // Apply friction/drag to slow it down for the drop
+      const drag = 1.0 - (0.1 * forceFactor);
+      this.ball.ballBody.velocity.x *= drag;
+      this.ball.ballBody.velocity.z *= drag;
 
       // Apply the force
       this.ball.ballBody.applyForce(
@@ -260,12 +264,12 @@ export class CourseManager {
       );
     }
 
-    // Ball is in hole if it's closer to the center and moving at a reasonable speed
-    // MODIFIED: Relaxed thresholds for better gameplay
-    // Capture radius is slightly larger than actual hole to account for ball radius overlap
-    const captureRadius = this.hole.holeRadius * 1.6; // Increased from 1.2 to 1.6
+    // Ball is in hole if it's closer to the center
+    // MODIFIED: Higher speed threshold allowed (easier to sink fast putts)
+    const captureRadius = this.hole.holeRadius * 0.9; // Must be mostly over hole
 
-    if (distance < captureRadius && horizontalSpeed < 3.5 && ballPos.y < 0.25) { // Speed limit increased from 2.5 to 3.5
+    if (distance < captureRadius && horizontalSpeed < 6.0 && ballPos.y < 0.25) {
+      // Speed limit increased to 6.0! (Was 3.5)
       console.log("Ball in hole! Distance:", distance, "Speed:", horizontalSpeed);
       this.startHoleAnimation();
       return true;

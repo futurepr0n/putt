@@ -71,6 +71,9 @@ function startAiming() {
   aimButton.style.backgroundColor = '#1976D2'; // Darker Blue
   aimButton.textContent = "Aiming...";
 
+  // Notify server we started aiming (for Snap-to-Pin)
+  socket.emit('aim_start');
+
   // Start streaming aiming updates
   if (aimInterval) clearInterval(aimInterval);
   aimInterval = setInterval(() => {
@@ -101,6 +104,8 @@ function stopAiming() {
   aimButton.textContent = `Direction Set! (${lockedAngle.toFixed(0)}°)`;
   statusDisplay.textContent = "Direction Locked. Hold Green to Putt.";
 
+  socket.emit('aim_end'); // Optional, to finalize snap if needed
+
   // Send final locked orientation to ensure game matches
   const angleRad = lockedAngle * (Math.PI / 180);
   const direction = {
@@ -127,11 +132,16 @@ function startPutt() {
   puttButton.style.backgroundColor = '#388E3C'; // Darker Green
   puttButton.textContent = "Swing Now!";
   statusDisplay.textContent = "Recording Swing...";
+
+  // Start streaming live swing data for visual feedback
+  if (swingInterval) clearInterval(swingInterval);
+  swingInterval = setInterval(streamSwingData, 50);
 }
 
 function stopPutt() {
   if (!isPutting) return;
   isPutting = false;
+  clearInterval(swingInterval);
   const duration = (Date.now() - puttStartTime) / 1000;
 
   puttButton.style.backgroundColor = '#4CAF50';
@@ -144,6 +154,34 @@ function stopPutt() {
 
   // Analyze Swing
   analyzeSwingAndSend(duration);
+}
+
+function streamSwingData() {
+  if (orientationHistory.length < 2) return;
+
+  // Provide live feedback on power/deviation
+  const curr = orientationHistory[orientationHistory.length - 1];
+
+  // Calculate current deviation from start
+  let alphaDiff = curr.alpha - puttStartOrientation.alpha;
+  alphaDiff = ((alphaDiff + 540) % 360) - 180;
+
+  // Calculate instantaneous power (roughly)
+  const prev = orientationHistory[Math.max(0, orientationHistory.length - 2)];
+  const dt = (curr.time - prev.time) / 1000;
+  let speed = 0;
+  if (dt > 0) {
+    const d_beta = curr.beta - prev.beta;
+    const d_gamma = curr.gamma - prev.gamma;
+    speed = Math.sqrt(d_beta * d_beta + d_gamma * d_gamma) / dt;
+  }
+
+  const normalizedPower = Math.min(speed / 300, 1.5);
+
+  socket.emit('swing_data', {
+    deviation: alphaDiff,
+    power: normalizedPower
+  });
 }
 
 function analyzeSwingAndSend(duration) {
