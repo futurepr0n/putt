@@ -112,17 +112,59 @@ function sendOrientationData() {
 
   let direction;
 
-  if (window.useAbsoluteMode && currentOrientation.alpha !== undefined) {
-    // In absolute mode, use alpha (compass direction) for 360° control
-    // Get alpha angle (0-360) and adjust by reference angle (calibration)
-    let rawAngle = currentOrientation.alpha;
+  if (window.useAbsoluteMode) {
+    // Determine the best angle source
+    // Priority: 
+    // 1. webkitCompassHeading (iOS - best for compass)
+    // 2. absolute alpha (Android - best for compass)
+    // 3. standard alpha (Gyro-based/Relative)
+    let rawAngle = 0;
+    let source = 'None';
+
+    if (currentOrientation.heading !== undefined) {
+      rawAngle = currentOrientation.heading;
+      source = 'iOS Compass';
+    } else if (currentOrientation.absolute !== undefined) {
+      rawAngle = currentOrientation.absolute;
+      // Android absolute alpha is usually 0=North, increasing Counter-Clockwise?
+      // Standard Web API: 0=North, Counter-Clockwise around Z.
+      // We might need to invert it to match compass heading (Clockwise).
+      // Let's stick to raw for now and let user "Invert" if needed.
+      source = 'Android Absolute';
+    } else if (currentOrientation.alpha !== undefined) {
+      rawAngle = currentOrientation.alpha;
+      source = 'Relative Gyro';
+    } else {
+      // Fallback relies on gamma? No, we stay in absolute mode but warn
+      source = 'No Data';
+      // If we really have no alpha, maybe we SHOULD use gamma if face down?
+      // But let's assume valid device.
+    }
+
+    if (statusDisplay && Math.random() < 0.05) { // Update occasionally to reduce flicker
+      // Optional: Show source in specific debug element if it existed, or append to status?
+      // For now, let's keep status clean, but log to debug.
+      debug(`Source: ${source} | Angle: ${rawAngle?.toFixed(0)}`);
+    }
+
+    // Fallback if no angle available
+    if (rawAngle === undefined || rawAngle === null) rawAngle = 0;
+
+    // Calculate delta angle
     let angle = rawAngle - (referenceAngle || 0);
 
-    // Normalize to 0-360
-    if (angle < 0) angle += 360;
-    if (angle >= 360) angle -= 360;
+    // Apply Invert option (flips the aim 180 degrees)
+    if (window.invertAim) {
+      angle += 180;
+    }
+
+    // Robust normalization to 0-360
+    angle = ((angle % 360) + 360) % 360;
 
     // Convert to radians
+    // Note: We might need to invert direction of rotation depending on the device/OS convention
+    // But calibration usually handles the offset. If rotation is mirrored, we might need a "Mirror" toggle too.
+    // For now, let's assume standard compass rotation (Clockwise increases angle).
     let angleRad = angle * (Math.PI / 180);
 
     // Get power from beta tilt - centered around 45 degrees
@@ -131,6 +173,7 @@ function sendOrientationData() {
     const power = 10 + tiltPower * 5; // 10-15 range
 
     // Use polar coordinates for direction
+    // Map standard compass (0=North, 90=East) to 3D space (0=+Z, 90=+X)
     direction = {
       x: Math.sin(angleRad) * power,
       y: 0.1 * power,
@@ -167,6 +210,13 @@ function handleOrientation(event) {
   if (event.alpha !== null) {
     currentOrientation.alpha = event.alpha;
   }
+  if (event.absolute === true && event.alpha !== null) {
+    currentOrientation.absolute = event.alpha;
+  }
+  // iOS support
+  if (event.webkitCompassHeading !== undefined && event.webkitCompassHeading !== null) {
+    currentOrientation.heading = event.webkitCompassHeading;
+  }
 
   debug(`Orientation: ${currentOrientation.alpha?.toFixed(2)}, ${currentOrientation.beta?.toFixed(2)}, ${currentOrientation.gamma?.toFixed(2)}`);
 
@@ -188,6 +238,7 @@ function handleOrientation(event) {
 window.addEventListener('DOMContentLoaded', function () {
   // Direction mode toggle removed
   addCalibrationButton();
+  addInvertToggle();
 
   // Initialize with current orientation values
   currentOrientation = { alpha: 0, beta: 0, gamma: 0 };
@@ -323,7 +374,10 @@ function addCalibrationButton() {
 
   calibrateButton.addEventListener('click', function () {
     // Single click calibration
-    const currentAlpha = currentOrientation.alpha || 0;
+    let currentAlpha = 0;
+    if (currentOrientation.heading !== undefined) currentAlpha = currentOrientation.heading;
+    else if (currentOrientation.absolute !== undefined) currentAlpha = currentOrientation.absolute;
+    else if (currentOrientation.alpha !== undefined) currentAlpha = currentOrientation.alpha;
 
     // Set reference angle to current alpha (this becomes "forward" or 0 deg)
     referenceAngle = currentAlpha;
@@ -349,10 +403,49 @@ function addCalibrationButton() {
   document.body.appendChild(calibrateButton);
 }
 
+function addInvertToggle() {
+  // Check if button already exists
+  if (document.getElementById('invertToggle')) return;
+
+  const invertButton = document.createElement('button');
+  invertButton.id = 'invertToggle';
+  invertButton.textContent = 'Invert Aim: OFF';
+  invertButton.style.position = 'fixed';
+  invertButton.style.top = '110px';
+  invertButton.style.right = '10px';
+  invertButton.style.padding = '8px 12px';
+  invertButton.style.backgroundColor = 'rgba(100, 100, 100, 0.7)';
+  invertButton.style.color = 'white';
+  invertButton.style.border = 'none';
+  invertButton.style.borderRadius = '5px';
+  invertButton.style.zIndex = '1000';
+
+  window.invertAim = false;
+
+  invertButton.addEventListener('click', function () {
+    window.invertAim = !window.invertAim;
+    this.textContent = `Invert Aim: ${window.invertAim ? 'ON' : 'OFF'}`;
+    this.style.backgroundColor = window.invertAim ? 'rgba(0, 128, 0, 0.7)' : 'rgba(100, 100, 100, 0.7)';
+
+    if (statusDisplay) {
+      statusDisplay.textContent = `Aim direction ${window.invertAim ? 'inverted' : 'normal'}`;
+    }
+  });
+
+  document.body.appendChild(invertButton);
+}
+
 
 
 // Start tracking orientation when permissions are granted
 window.addEventListener('deviceorientation', handleOrientation, true);
+if ('ondeviceorientationabsolute' in window) {
+  window.addEventListener('deviceorientationabsolute', (event) => {
+    if (event.absolute === true && event.alpha !== null) {
+      currentOrientation.absolute = event.alpha;
+    }
+  }, true);
+}
 
 // Start putt
 if (puttButton) {
@@ -404,8 +497,13 @@ if (puttButton) {
           const dt = (curr.timestamp - prev.timestamp) / 1000; // time diff in seconds
 
           if (dt > 0) {
-            const betaChange = Math.abs(curr.beta - prev.beta);
-            const gammaChange = Math.abs(curr.gamma - prev.gamma);
+            // Robust angle difference for swinging (handle 360/0 wrapping)
+            const betaDiff = curr.beta - prev.beta;
+            const betaChange = Math.abs((betaDiff + 540) % 360 - 180); // Shortest path -180 to 180
+
+            const gammaDiff = curr.gamma - prev.gamma;
+            const gammaChange = Math.abs((gammaDiff + 540) % 360 - 180);
+
             // Angular speed in degrees per second
             const angularSpeed = Math.sqrt(betaChange * betaChange + gammaChange * gammaChange) / dt;
             maxAngularSpeed = Math.max(maxAngularSpeed, angularSpeed);
