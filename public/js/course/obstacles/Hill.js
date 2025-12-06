@@ -11,7 +11,7 @@ export class Hill {
     this.hillBody = null;
 
     this.material = new THREE.MeshStandardMaterial({
-      color: gameConfig.materials.green
+      color: 0x2E8B57 // SeaGreen - slightly different from ground (0x228B22) for visibility
     });
   }
 

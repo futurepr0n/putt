@@ -39,7 +39,7 @@ export const gameConfig = {
 
   // Hole settings
   hole: {
-    radius: 0.15,
+    radius: 0.1875, // Increased by 1.25x for easier putting
     depth: 0.1,
     animationDuration: 1000
   },
