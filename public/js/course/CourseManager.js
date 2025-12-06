@@ -221,29 +221,7 @@ export class CourseManager {
         }
       }
 
-      // Check for hole trigger contact
-      if ((bodyA === this.ball.ballBody && bodyB.isHoleTrigger) ||
-        (bodyB === this.ball.ballBody && bodyA.isHoleTrigger)) {
 
-        console.log("Ball contacted hole physics");
-
-        // Only trigger if ball is moving slowly enough and close to center
-        const velocity = this.ball.ballBody.velocity;
-        const horizontalSpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
-
-        const ballPos = this.ball.ballBody.position;
-        const dx = ballPos.x - this.hole.holeCenterX;
-        const dz = ballPos.z - this.hole.holeCenterZ;
-        const distanceToCenter = Math.sqrt(dx * dx + dz * dz);
-
-        // More forgiving conditions on actual collision
-        if (horizontalSpeed < 2.5 &&
-          distanceToCenter < this.hole.holeRadius * 1.5 &&
-          !this.holeInProgress) {
-          console.log("Ball in hole detected via contact!");
-          this.startHoleAnimation();
-        }
-      }
     });
   }
 
@@ -264,9 +242,13 @@ export class CourseManager {
     const horizontalSpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
 
     // Apply gentle attraction when ball is near the hole
-    if (distance < this.hole.holeRadius * 4 && horizontalSpeed < 2 && ballPos.y < 0.2) {
+    // Apply gentle attraction when ball is near the hole (Magnetism)
+    // Increased range to match larger hole and ensure smooth entry
+    const magnetismRange = this.hole.holeRadius * 3;
+
+    if (distance < magnetismRange && horizontalSpeed < 3 && ballPos.y < 0.2) {
       // Calculate force direction toward hole
-      const forceFactor = 0.01 * (1 - distance / (this.hole.holeRadius * 4));
+      const forceFactor = 0.05 * (1 - distance / magnetismRange); // Stronger pull as it gets closer
       const forceX = -dx * forceFactor;
       const forceZ = -dz * forceFactor;
 
@@ -279,7 +261,10 @@ export class CourseManager {
 
     // Ball is in hole if it's closer to the center and moving at a reasonable speed
     // MODIFIED: Relaxed thresholds for better gameplay
-    if (distance < this.hole.holeRadius * 1.5 && horizontalSpeed < 2.5 && ballPos.y < 0.25) {
+    // Capture radius is slightly larger than actual hole to account for ball radius overlap
+    const captureRadius = this.hole.holeRadius * 1.2;
+
+    if (distance < captureRadius && horizontalSpeed < 2.5 && ballPos.y < 0.25) {
       console.log("Ball in hole! Distance:", distance, "Speed:", horizontalSpeed);
       this.startHoleAnimation();
       return true;
