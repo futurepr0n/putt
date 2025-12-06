@@ -79,7 +79,6 @@ function startAiming() {
   aimInterval = setInterval(() => {
     const heading = getCompassHeading();
     // Send 'preview' direction to game so arrow rotates
-    // We send a normalized vector based on this angle
     const angleRad = heading * (Math.PI / 180);
     const direction = {
       x: Math.sin(angleRad),
@@ -88,7 +87,7 @@ function startAiming() {
     };
     socket.emit('orientation', direction);
 
-    statusDisplay.textContent = `Angle: ${heading.toFixed(0)}°`;
+    statusDisplay.innerHTML = `Aiming...<br>Angle: ${heading.toFixed(0)}°<br>(Point phone at screen)`;
   }, 50);
 }
 
@@ -101,12 +100,12 @@ function stopAiming() {
   lockedAngle = getCompassHeading();
 
   aimButton.style.backgroundColor = '#2196F3'; // Original Blue
-  aimButton.textContent = `Direction Set! (${lockedAngle.toFixed(0)}°)`;
-  statusDisplay.textContent = "Direction Locked. Hold Green to Putt.";
+  aimButton.textContent = `Set! (${lockedAngle.toFixed(0)}°)`;
+  statusDisplay.textContent = "Angle Locked. Hold Green to Putt.";
 
-  socket.emit('aim_end'); // Optional, to finalize snap if needed
+  socket.emit('aim_end');
 
-  // Send final locked orientation to ensure game matches
+  // Send final locked orientation
   const angleRad = lockedAngle * (Math.PI / 180);
   const direction = {
     x: Math.sin(angleRad),
@@ -119,30 +118,42 @@ function stopAiming() {
 
 // --- 3. Putting Logic ---
 
+let swingInterval = null;
+
 function startPutt() {
   isPutting = true;
   puttStartTime = Date.now();
   orientationHistory = [];
 
-  // Capture the 'Zero' stance for this swing
-  // This allows the user to hold the phone comfortably. Deviations from THIS position
-  // will cause the ball to curve/slice.
+  // Capture the 'Zero' stance
   puttStartOrientation = { ...currentOrientation };
 
-  puttButton.style.backgroundColor = '#388E3C'; // Darker Green
+  puttButton.style.backgroundColor = '#388E3C';
   puttButton.textContent = "Swing Now!";
-  statusDisplay.textContent = "Recording Swing...";
+  statusDisplay.textContent = "Ready...";
 
-  // Start streaming live swing data for visual feedback
+  // Start streaming live swing data
   if (swingInterval) clearInterval(swingInterval);
   swingInterval = setInterval(() => {
     streamSwingData();
-    // Debugging Swing State
+
+    // VERBOSE DEBUG UI
     if (statusDisplay && orientationHistory.length > 0) {
       const last = orientationHistory[orientationHistory.length - 1];
-      statusDisplay.innerHTML = `Recording... <br>Hist: ${orientationHistory.length} <br>B: ${last.beta.toFixed(0)} G: ${last.gamma.toFixed(0)}`;
+      // Show Deltas from start
+      const dB = (last.beta - puttStartOrientation.beta).toFixed(0);
+      const dG = (last.gamma - puttStartOrientation.gamma).toFixed(0);
+      const dA = (last.alpha - puttStartOrientation.alpha).toFixed(0);
+
+      statusDisplay.innerHTML = `
+                Moving!<br>
+                Samples: ${orientationHistory.length}<br>
+                ΔBeta: ${dB}° (Pitch)<br>
+                ΔGamma: ${dG}° (Roll)<br>
+                ΔAlpha: ${dA}° (Turn)
+            `;
     } else if (orientationHistory.length === 0) {
-      statusDisplay.textContent = "Recording... (No Data!)";
+      statusDisplay.innerHTML = "Waiting for data...<br>(Check Permissions?)";
     }
   }, 50);
 }
