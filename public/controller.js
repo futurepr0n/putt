@@ -186,7 +186,7 @@ function handleOrientation(event) {
 
 // Add UI components when page loads
 window.addEventListener('DOMContentLoaded', function () {
-  addDirectionModeToggle();
+  // Direction mode toggle removed
   addCalibrationButton();
 
   // Initialize with current orientation values
@@ -298,55 +298,11 @@ function showPuttButton() {
 }
 
 
-function addDirectionModeToggle() {
-  // Check if button already exists
-  if (document.getElementById('directionModeToggle')) return;
-
-  const toggleButton = document.createElement('button');
-  toggleButton.id = 'directionModeToggle';
-  toggleButton.textContent = '360° Aiming: Off';
-  toggleButton.style.position = 'fixed';
-  toggleButton.style.top = '10px';
-  toggleButton.style.right = '10px';
-  toggleButton.style.padding = '8px 12px';
-  toggleButton.style.backgroundColor = 'rgba(0, 0, 255, 0.7)';
-  toggleButton.style.color = 'white';
-  toggleButton.style.border = 'none';
-  toggleButton.style.borderRadius = '5px';
-  toggleButton.style.zIndex = '1000';
-
-  toggleButton.addEventListener('click', function () {
-    toggleDirectionMode();
-    this.textContent = `360° Aiming: ${directionMode === 'absolute' ? 'On' : 'Off'}`;
-    this.style.backgroundColor = directionMode === 'absolute' ? 'rgba(0, 128, 0, 0.7)' : 'rgba(0, 0, 255, 0.7)';
-  });
-
-  document.body.appendChild(toggleButton);
-}
+// Direction mode toggle removed in favor of absoluteModeToggle
 
 // Add calibration functionality
-let isCalibrating = false;
-let calibrationAngle = 0;
-let calibrationStartGamma = 0;
-let calibrationStartAlpha = 0;
-
-let directionMode = 'relative'; // 'relative' or 'absolute'
+// Direction mode is now handled by window.useAbsoluteMode
 let referenceAngle = 0;
-
-// Function to toggle between direction modes
-function toggleDirectionMode() {
-  directionMode = directionMode === 'relative' ? 'absolute' : 'relative';
-
-  // Update UI to show current mode
-  if (statusDisplay) {
-    statusDisplay.textContent = `Direction mode: ${directionMode === 'relative' ? 'Relative to phone' : '360° aiming'}`;
-  }
-
-  // Set reference angle when switching to absolute mode
-  if (directionMode === 'absolute') {
-    referenceAngle = 0;
-  }
-}
 
 function addCalibrationButton() {
   // Check if button already exists
@@ -366,41 +322,28 @@ function addCalibrationButton() {
   calibrateButton.style.zIndex = '1000';
 
   calibrateButton.addEventListener('click', function () {
-    if (!isCalibrating) {
-      // Start calibration
-      isCalibrating = true;
-      calibrationStartGamma = currentOrientation.gamma || 0;
-      calibrationStartAlpha = currentOrientation.alpha || 0;
-      this.textContent = 'Point & Confirm';
-      this.style.backgroundColor = 'rgba(255, 0, 0, 0.7)';
+    // Single click calibration
+    const currentAlpha = currentOrientation.alpha || 0;
 
-      if (statusDisplay) {
-        statusDisplay.textContent = 'Point phone forward and tap button';
-      }
-    } else {
-      // Finish calibration
-      isCalibrating = false;
-      const currentGamma = currentOrientation.gamma || 0;
-      const currentAlpha = currentOrientation.alpha || 0;
+    // Set reference angle to current alpha (this becomes "forward" or 0 deg)
+    referenceAngle = currentAlpha;
 
-      // Calculate angle change
-      const deltaGamma = currentGamma - calibrationStartGamma;
-      const deltaAlpha = currentAlpha - calibrationStartAlpha;
+    // Visual feedback
+    const originalText = this.textContent;
+    const originalColor = this.style.backgroundColor;
 
-      // Set reference angle based on changes
-      if (Math.abs(deltaAlpha) > 5) {
-        referenceAngle = currentAlpha;
-      } else {
-        referenceAngle = 0;
-      }
+    this.textContent = 'Direction Set!';
+    this.style.backgroundColor = 'rgba(0, 128, 0, 0.7)';
 
-      this.textContent = 'Calibrate Direction';
-      this.style.backgroundColor = 'rgba(255, 165, 0, 0.7)';
-
-      if (statusDisplay) {
-        statusDisplay.textContent = 'Calibration complete';
-      }
+    if (statusDisplay) {
+      statusDisplay.textContent = 'Direction calibrated! Current angle set as forward.';
     }
+
+    // Reset button after a short delay
+    setTimeout(() => {
+      this.textContent = originalText;
+      this.style.backgroundColor = originalColor;
+    }, 1500);
   });
 
   document.body.appendChild(calibrateButton);
