@@ -243,12 +243,13 @@ export class CourseManager {
 
     // Apply gentle attraction when ball is near the hole
     // Apply gentle attraction when ball is near the hole (Magnetism)
+    // Apply gentle attraction when ball is near the hole (Magnetism)
     // Increased range to match larger hole and ensure smooth entry
-    const magnetismRange = this.hole.holeRadius * 3;
+    const magnetismRange = this.hole.holeRadius * 4; // Increased from 3 to 4
 
-    if (distance < magnetismRange && horizontalSpeed < 3 && ballPos.y < 0.2) {
+    if (distance < magnetismRange && horizontalSpeed < 5 && ballPos.y < 0.2) { // Speed limit increased from 3 to 5
       // Calculate force direction toward hole
-      const forceFactor = 0.05 * (1 - distance / magnetismRange); // Stronger pull as it gets closer
+      const forceFactor = 0.2 * (1 - distance / magnetismRange); // Stronger pull (0.2 instead of 0.05)
       const forceX = -dx * forceFactor;
       const forceZ = -dz * forceFactor;
 
@@ -262,9 +263,9 @@ export class CourseManager {
     // Ball is in hole if it's closer to the center and moving at a reasonable speed
     // MODIFIED: Relaxed thresholds for better gameplay
     // Capture radius is slightly larger than actual hole to account for ball radius overlap
-    const captureRadius = this.hole.holeRadius * 1.2;
+    const captureRadius = this.hole.holeRadius * 1.6; // Increased from 1.2 to 1.6
 
-    if (distance < captureRadius && horizontalSpeed < 2.5 && ballPos.y < 0.25) {
+    if (distance < captureRadius && horizontalSpeed < 3.5 && ballPos.y < 0.25) { // Speed limit increased from 2.5 to 3.5
       console.log("Ball in hole! Distance:", distance, "Speed:", horizontalSpeed);
       this.startHoleAnimation();
       return true;
