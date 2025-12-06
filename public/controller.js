@@ -112,44 +112,45 @@ function sendOrientationData() {
 
   let direction;
 
-  // In absolute mode, use alpha (compass direction) for 360° control
-  // Get alpha angle (0-360) and adjust by reference angle (calibration)
-  let rawAngle = currentOrientation.alpha;
-  let angle = rawAngle - (referenceAngle || 0);
+  if (window.useAbsoluteMode && currentOrientation.alpha !== undefined) {
+    // In absolute mode, use alpha (compass direction) for 360° control
+    // Get alpha angle (0-360) and adjust by reference angle (calibration)
+    let rawAngle = currentOrientation.alpha;
+    let angle = rawAngle - (referenceAngle || 0);
 
-  // Normalize to 0-360
-  if (angle < 0) angle += 360;
-  if (angle >= 360) angle -= 360;
+    // Normalize to 0-360
+    if (angle < 0) angle += 360;
+    if (angle >= 360) angle -= 360;
 
-  // Convert to radians
-  let angleRad = angle * (Math.PI / 180);
+    // Convert to radians
+    let angleRad = angle * (Math.PI / 180);
 
-  // Get power from beta tilt - centered around 45 degrees
-  const betaAngle = currentOrientation.beta || 45;
-  const tiltPower = Math.abs(betaAngle - 45) / 45;
-  const power = 10 + tiltPower * 5; // 10-15 range
+    // Get power from beta tilt - centered around 45 degrees
+    const betaAngle = currentOrientation.beta || 45;
+    const tiltPower = Math.abs(betaAngle - 45) / 45;
+    const power = 10 + tiltPower * 5; // 10-15 range
 
-  // Use polar coordinates for direction
-  direction = {
-    x: Math.sin(angleRad) * power,
-    y: 0.1 * power,
-    z: Math.cos(angleRad) * power
-  };
-} else {
-  // Regular mode - use gamma for direction
-  const gamma = currentOrientation.gamma || 0;
-  const beta = currentOrientation.beta || 45;
+    // Use polar coordinates for direction
+    direction = {
+      x: Math.sin(angleRad) * power,
+      y: 0.1 * power,
+      z: Math.cos(angleRad) * power
+    };
+  } else {
+    // Regular mode - use gamma for direction
+    const gamma = currentOrientation.gamma || 0;
+    const beta = currentOrientation.beta || 45;
 
-  // Basic direction calculation
-  direction = {
-    x: -Math.sin(gamma * (Math.PI / 180)) * 15,
-    y: Math.sin(beta * (Math.PI / 180)) * 5,
-    z: Math.cos(gamma * (Math.PI / 180)) * 15
-  };
-}
+    // Basic direction calculation
+    direction = {
+      x: -Math.sin(gamma * (Math.PI / 180)) * 15,
+      y: Math.sin(beta * (Math.PI / 180)) * 5,
+      z: Math.cos(gamma * (Math.PI / 180)) * 15
+    };
+  }
 
-// Send the direction data to the server
-socket.emit('orientation', direction);
+  // Send the direction data to the server
+  socket.emit('orientation', direction);
 }
 
 
