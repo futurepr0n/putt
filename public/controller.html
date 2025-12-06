@@ -17,25 +17,43 @@
       touch-action: none; /* Prevent browser handling of touch gestures */
       color: white;
     }
+    .button-container {
+      display: flex;
+      flex-direction: column;
+      width: 90%;
+      gap: 20px;
+      margin: 20px 0;
+    }
     .button {
-      width: 80%;
-      height: 60px;
-      font-size: 18px;
-      margin: 10px 0;
+      width: 100%;
+      height: 100px; /* Taller buttons */
+      font-size: 20px;
+      margin: 0; /* Handled by gap */
       border: none;
-      border-radius: 5px;
+      border-radius: 10px;
       cursor: pointer;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      text-transform: uppercase;
+      font-weight: bold;
+      transition: transform 0.1s;
+    }
+    .button:active {
+      transform: scale(0.98);
+    }
+    #aimButton {
+      background-color: #2196F3; /* Blue */
+      color: white;
+    }
+    #puttButton {
+      background-color: #4CAF50; /* Green */
+      color: white;
+      height: 140px; /* Putt button slightly larger */
     }
     #permissionButton {
-      background-color: #2196F3;
-      color: white;
-      font-weight: bold;
-    }
-    #throwButton {
-      height: 120px;
-      background-color: #4CAF50;
-      color: white;
-      font-size: 24px;
+      height: 60px;
+      background-color: #FF9800;
     }
     #statusDisplay {
       font-size: 18px;
@@ -115,15 +133,20 @@
   <div id="statusDisplay">Loading...</div>
   
   <div class="permission-section" id="permissionSection">
-    <h3>iOS Permission Required</h3>
-    <button id="permissionButton" class="button">TAP HERE TO ENABLE CLUB MOTION</button>
-    <p class="ios-note">iOS requires permission to use motion controls for putting</p>
+    <h3>Enable Sensors</h3>
+    <button id="permissionButton" class="button">TAP TO ENABLE</button>
+    <p class="ios-note">Required for aiming and putting</p>
   </div>
   
-  <button id="throwButton" class="button">HOLD TO PUTT</button>
+  <div class="button-container" id="controlsSection" style="display:none;">
+    <button id="aimButton" class="button">HOLD TO SET ANGLE</button>
+    <button id="puttButton" class="button">HOLD TO PUTT</button>
+  </div>
   
   <div class="control-guide">
-    Hold the button and swing your phone like a golf club to putt the ball
+    1. Hold BLUE to Aim <br>
+    2. Release to Lock <br>
+    3. Hold GREEN & Swing to Putt!
   </div>
   
   <div id="connectionStatus">Connecting to server...</div>
