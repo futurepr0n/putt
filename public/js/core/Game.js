@@ -199,6 +199,13 @@ export class Game {
 
         // Create next course
         this.courseManager.createCourse(this.currentCourse, this.par);
+
+        // Reset game state for the new hole
+        this.courseCompleted = false;
+        this.ballInMotion = false;
+        this.strokeCount = 0;
+        this.uiManager.updateStrokeDisplay(this.strokeCount);
+        this.uiManager.showMessage('Ready for Hole ' + (this.currentCourse + 1));
       } else {
         this.uiManager.showGameComplete(this.totalScore);
       }
