@@ -66,8 +66,8 @@ export class PhysicsManager {
   }
   
   update() {
-    // Step the physics simulation
-    this.world.step(1/60);
+    // Step the physics simulation using the configured fixed time step
+    this.world.step(this.world.fixedTimeStep);
     
     // Sync meshes with physics bodies
     this.syncMeshes();
