@@ -48,7 +48,14 @@ export class Game {
     this.connectSocketEvents();
 
     // Create first course
-    this.courseManager.createCourse(this.currentCourse);
+    // Set par for the current course
+    this.par = gameConfig.coursePars[this.currentCourse] || 3;
+
+    // Create the course
+    this.courseManager.createCourse(this.currentCourse, this.par);
+
+    // Update UI
+    this.uiManager.updateCourseInfo(this.currentCourse + 1, gameConfig.totalCourses, this.par);
 
     // Set up event listeners
     this.setupEventListeners();
@@ -180,31 +187,37 @@ export class Game {
     this.totalScore += this.strokeCount;
 
     // Move to next course after a delay
-    setTimeout(() => {
-      this.currentCourse++;
-      if (this.currentCourse < gameConfig.totalCourses) {
-        this.courseManager.createCourse(this.currentCourse);
-      } else {
-        this.uiManager.showGameComplete(this.totalScore);
-      }
-    }, 3000);
-  }
+    this.currentCourse++;
+    if (this.currentCourse < gameConfig.totalCourses) {
+      // Set par for next course
+      this.par = gameConfig.coursePars[this.currentCourse] || 3;
 
-  setupEventListeners() {
-    window.addEventListener('resize', () => {
-      this.sceneManager.handleResize();
-    });
-  }
+      // Update UI
+      this.uiManager.updateCourseInfo(this.currentCourse + 1, gameConfig.totalCourses, this.par);
 
-  connectSocketEvents() {
-    this.socketManager.on('orientation', (data) => {
-      if (!this.ballInMotion && !this.courseCompleted) {
-        this.uiManager.updateDirectionArrow(data);
-      }
-    });
+      // Create next course
+      this.courseManager.createCourse(this.currentCourse, this.par);
+    } else {
+      this.uiManager.showGameComplete(this.totalScore);
+    }
+  }, 3000);
+}
 
-    this.socketManager.on('throw', (velocityData) => {
-      this.handlePutt(velocityData);
-    });
-  }
+setupEventListeners() {
+  window.addEventListener('resize', () => {
+    this.sceneManager.handleResize();
+  });
+}
+
+connectSocketEvents() {
+  this.socketManager.on('orientation', (data) => {
+    if (!this.ballInMotion && !this.courseCompleted) {
+      this.uiManager.updateDirectionArrow(data);
+    }
+  });
+
+  this.socketManager.on('throw', (velocityData) => {
+    this.handlePutt(velocityData);
+  });
+}
 }
