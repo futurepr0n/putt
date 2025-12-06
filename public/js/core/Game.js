@@ -85,6 +85,30 @@ export class Game {
       return;
     }
 
+    // Use the aimed direction from the UI/Controller if available
+    if (this.uiManager && this.uiManager.lastDirectionData) {
+      const aim = this.uiManager.lastDirectionData;
+
+      // Calculate the power/magnitude of the physical swing
+      const swingMagnitude = Math.sqrt(
+        velocityData.x * velocityData.x +
+        velocityData.y * velocityData.y +
+        velocityData.z * velocityData.z
+      );
+
+      // Normalize the aim direction
+      const aimMagnitude = Math.sqrt(aim.x * aim.x + aim.z * aim.z);
+
+      if (aimMagnitude > 0) {
+        // Apply swing power to aim direction
+        // We override the x and z components to match the arrow direction
+        // but scale them to match the physical swing power
+        velocityData.x = (aim.x / aimMagnitude) * swingMagnitude;
+        velocityData.z = (aim.z / aimMagnitude) * swingMagnitude;
+        // velocityData.y stays the same (usually small)
+      }
+    }
+
     // Apply velocity to ball
     const success = this.courseManager.puttBall(velocityData);
 
