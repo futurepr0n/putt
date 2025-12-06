@@ -135,17 +135,30 @@ function startPutt() {
 
   // Start streaming live swing data for visual feedback
   if (swingInterval) clearInterval(swingInterval);
-  swingInterval = setInterval(streamSwingData, 50);
+  swingInterval = setInterval(() => {
+    streamSwingData();
+    // Debugging Swing State
+    if (statusDisplay && orientationHistory.length > 0) {
+      const last = orientationHistory[orientationHistory.length - 1];
+      statusDisplay.innerHTML = `Recording... <br>Hist: ${orientationHistory.length} <br>B: ${last.beta.toFixed(0)} G: ${last.gamma.toFixed(0)}`;
+    } else if (orientationHistory.length === 0) {
+      statusDisplay.textContent = "Recording... (No Data!)";
+    }
+  }, 50);
 }
 
 function stopPutt() {
   if (!isPutting) return;
   isPutting = false;
   clearInterval(swingInterval);
+
   const duration = (Date.now() - puttStartTime) / 1000;
 
   puttButton.style.backgroundColor = '#4CAF50';
   puttButton.textContent = "HOLD TO PUTT";
+
+  // Debug: Verify duration and history check
+  debug(`Putt Stop. Duration: ${duration.toFixed(2)}s. History: ${orientationHistory.length}`);
 
   if (duration < 0.1) {
     statusDisplay.textContent = "Tap detected. Hold button to putt.";
@@ -185,73 +198,147 @@ function streamSwingData() {
 }
 
 function analyzeSwingAndSend(duration) {
-  if (orientationHistory.length < 5) return;
-
-  // 1. Calculate Swing Speed (Max change in Beta/Gamma)
-  // We look for the peak angular velocity
-  let maxSpeed = 0;
-
-  for (let i = 1; i < orientationHistory.length; i++) {
-    const prev = orientationHistory[i - 1];
-    const curr = orientationHistory[i];
-    const dt = (curr.time - prev.time) / 1000;
-    if (dt <= 0) continue;
-
-    // Simple distance in angular space
-    const d_beta = curr.beta - prev.beta;
-    const d_gamma = curr.gamma - prev.gamma;
-    const speed = Math.sqrt(d_beta * d_beta + d_gamma * d_gamma) / dt;
-
-    if (speed > maxSpeed) maxSpeed = speed;
+  if (orientationHistory.length < 5) {
+    statusDisplay.textContent = "Swing too short. Try again.";
+    return;
   }
 
-  // 2. Calculate Deviation (Slice/Hook)
-  // We compare the final orientation (or average of swing) vs start
-  // Specifically looking at 'Gamma' (Roll) or 'Alpha' (Yaw) depending on holding style.
-  // Assuming standard "pointing" swing:
-  // Change in Alpha represents deviation from the straight line.
+  // 1. Determine Major Swing Axis (Beta vs Gamma)
+  // Calculate range of motion for both
+  let minBeta = 999, maxBeta = -999, minGamma = 999, maxGamma = -999;
+  orientationHistory.forEach(h => {
+    minBeta = Math.min(minBeta, h.beta);
+    maxBeta = Math.max(maxBeta, h.beta);
+    minGamma = Math.min(minGamma, h.gamma);
+    maxGamma = Math.max(maxGamma, h.gamma);
+  });
 
-  // Let's use the difference between the End Heading and Start Heading during the swing
-  // But be careful of the locked angle vs actual phone heading.
-  // If I lock angle at 90, but turn my body to 100 to start putt, 100 is my "Zero".
-  // If I swing and end at 110, I sliced 10 degrees right.
+  const rangeBeta = maxBeta - minBeta;
+  const rangeGamma = maxGamma - minGamma;
 
-  const startAlpha = orientationHistory[0].alpha;
-  const endAlpha = orientationHistory[orientationHistory.length - 1].alpha;
+  // Assuming "Face Down" grip:
+  // If holding like a putter, swing is mainy Pitch (Beta) or Roll (Gamma) depending on exact hold.
+  // We'll just define the "Swing Axis" as the one with more movement.
+  const axis = rangeBeta > rangeGamma ? 'beta' : 'gamma';
+  const startVal = puttStartOrientation[axis];
 
-  // Check for wrapping
-  let alphaDiff = endAlpha - startAlpha;
-  // Normalize -180 to 180
+  // 2. Identify Backswing Apex
+  // Finds the point furthest from startVal
+  // note: could be positive or negative depending on direction
+  let maxDeviation = 0;
+  let apexIndex = 0;
+
+  for (let i = 0; i < orientationHistory.length; i++) {
+    const val = orientationHistory[i][axis];
+    const diff = Math.abs(val - startVal); // Simple distance
+    // handle wrapping? Beta -180 to 180. Gamma -90 to 90.
+    // For simplicity assume no full 360 wrap in a single putt swing.
+
+    if (diff > maxDeviation) {
+      maxDeviation = diff;
+      apexIndex = i;
+    }
+  }
+
+  // Check if backswing was significant
+  if (maxDeviation < 5.0) {
+    statusDisplay.textContent = "Minimal motion. Swing larger.";
+    debug("Motion too small: " + maxDeviation.toFixed(1));
+    return;
+  }
+
+  // 3. Find Impact Point (Return to Start)
+  // Search from Apex forward
+  let impactIndex = -1;
+  let minDiffAtImpact = 999;
+
+  // We want to find where it crosses startVal, or gets closest to it *after* the apex
+  for (let i = apexIndex + 1; i < orientationHistory.length; i++) {
+    const val = orientationHistory[i][axis];
+    const diff = Math.abs(val - startVal);
+
+    // If we crossed zero (diff increases after decreasing?), implies we passed it.
+    // Let's just find the minimum diff to startVal after Apex.
+    if (diff < minDiffAtImpact) {
+      minDiffAtImpact = diff;
+      impactIndex = i;
+    } else {
+      // function started increasing again, maybe we passed impact? 
+      // Stick with the closest point found so far.
+      // But we should continue in case there's noise.
+    }
+  }
+
+  // Robust check: if we didn't return reasonably close to start
+  if (minDiffAtImpact > 15.0) {
+    // "You didn't complete the swing"
+    // But maybe they just followed through super fast?
+    // Let's use the last point if we can't find a good impact.
+    debug("Didn't return to start. Closest: " + minDiffAtImpact.toFixed(1));
+  }
+
+  // If impact not found (e.g. backswing only), default to end
+  if (impactIndex === -1) impactIndex = orientationHistory.length - 1;
+
+  // 4. Calculate Velocity AT Impact
+  // Look at window around impactIndex
+  const p1 = orientationHistory[Math.max(0, impactIndex - 2)];
+  const p2 = orientationHistory[Math.min(orientationHistory.length - 1, impactIndex + 2)];
+
+  const dt = (p2.time - p1.time) / 1000;
+  let impactSpeed = 0;
+
+  if (dt > 0) {
+    const d_axis = p2[axis] - p1[axis];
+    // We care about speed in the *Forward* direction.
+    // Backswing direction was (Apex - Start).
+    // Forward direction should be opposite.
+    const swingDir = orientationHistory[apexIndex][axis] - startVal; // e.g. +20
+    const velocityDir = d_axis; // e.g. -40 (coming back)
+
+    // Velocity should oppose backswing
+    if (Math.sign(swingDir) !== Math.sign(velocityDir)) {
+      impactSpeed = Math.abs(d_axis) / dt;
+    } else {
+      // Moving in same direction as backswing? weird.
+      impactSpeed = 0;
+    }
+  }
+
+  // 5. Calculate Deviation (Slice/Hook) AT Impact
+  // Compare Alpha at Impact vs Start
+  const impactAlpha = orientationHistory[impactIndex].alpha;
+  const startAlpha = puttStartOrientation.alpha;
+  let alphaDiff = impactAlpha - startAlpha;
   alphaDiff = ((alphaDiff + 540) % 360) - 180;
 
-  // Deviation is this change. 
-  // Positive = Right/Clockwise deviation
-  // Negative = Left/Counter-Clockwise deviation
   const deviation = alphaDiff;
 
-  // 3. Construct Final Velocity Vector
-  // Base direction is Locked Angle
-  // Final direction is Locked Angle + Deviation
+  // 6. Final Power Calculation
+  // Golf putt: max speed around 300-400 dps is hard.
+  const normalizedPower = Math.min(impactSpeed / 400, 1.5);
+
+  // Construct Vector
   const finalAngle = lockedAngle + deviation;
   const finalRad = finalAngle * (Math.PI / 180);
 
-  // Power factor 
-  // Golf putt: maxSpeed of ~200 deg/s is a solid hit.
-  // Cap at ~400
-  const normalizedPower = Math.min(maxSpeed / 300, 1.5);
   const baseSpeed = 15 * normalizedPower;
 
   const velocity = {
     x: Math.sin(finalRad) * baseSpeed,
-    y: 0.1, // Small hop
+    y: 0.1,
     z: Math.cos(finalRad) * baseSpeed,
-    power: normalizedPower // For UI display
+    power: normalizedPower
   };
 
-  debug(`Swing: Speed=${maxSpeed.toFixed(0)} Dev=${deviation.toFixed(1)}° Power=${(normalizedPower * 100).toFixed(0)}%`);
+  debug(`Swing Valid. Axis:${axis} Apex:${maxDeviation.toFixed(0)} Speed:${impactSpeed.toFixed(0)} Dev:${deviation.toFixed(1)}`);
   statusDisplay.textContent = `Putt! Power: ${(normalizedPower * 100).toFixed(0)}%`;
 
-  socket.emit('throw', velocity);
+  if (normalizedPower > 0.05) {
+    socket.emit('throw', velocity);
+  } else {
+    statusDisplay.textContent = "Swing too weak/slow.";
+  }
 }
 
 

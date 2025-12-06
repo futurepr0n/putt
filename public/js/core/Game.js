@@ -274,12 +274,15 @@ export class Game {
       // Vector from ball to hole
       const dx = holePos.x - ballPos.x;
       const dz = holePos.z - ballPos.z;
-      const angleToHole = Math.atan2(dx, dz);
+      // Flip angle by 180 degrees (PI) because "Forward" in Three.js is often -Z
+      // while atan2(dx, dz) points to +Z for (0, 0) -> (0, 1)
+      const angleToHole = Math.atan2(dx, dz) + Math.PI;
 
       // Current input angle (from the last orientation packet, or assume 0/Forward if undefined)
+      // Look for 'forward' relative to the hole.
       // Actually, we want to set the offset such that Input Angle + Offset = AngleToHole.
       // Since we don't know the exact instantaneous input angle *right now* (it comes in stream),
-      // we can assume the user is holding it roughly "forward" (0) when they tap aim, 
+      // we can assume the user is holding it roughly "forward" (0) when they tap aim,
       // OR better: we wait for the first orientation packet after aim_start to set the offset.
       // But to be snappy, let's assume the current stream data is "Forward".
 
