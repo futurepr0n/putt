@@ -17,7 +17,14 @@
       --aim: #4aa3ff;
       --putt: #43b05c;
     }
-    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+      /* Long-press must never select text or open the iOS callout: buttons are held through the stroke */
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+    }
     body {
       margin: 0;
       min-height: 100vh;
@@ -114,6 +121,7 @@
       -webkit-user-select: text;
     }
     .button {
+      touch-action: none; /* no scroll/zoom gestures stealing a held button */
       border: none;
       border-radius: 14px;
       font-size: 18px;
@@ -247,8 +255,8 @@
 
   <div class="card control-guide">
     <b>Aim:</b> hold AIM and turn the phone to move the line left or right.<br>
-    <b>Putt:</b> hold PUTT and keep still until it buzzes, then swing back and through like a putter. The ball goes at impact.<br>
-    <b>Power:</b> a longer backswing gives a longer putt. Accelerate through the ball.
+    <b>Putt:</b> hold PUTT and swing back and through like a putter. The ball goes at impact.<br>
+    <b>Power:</b> a bigger backswing and more speed through the ball give a longer putt. Twisting the phone at impact opens or closes the club face.
   </div>
 
   <div id="debugInfo"></div>
