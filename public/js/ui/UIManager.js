@@ -1,5 +1,6 @@
 import { DirectionIndicator } from './DirectionIndicator.js';
-import { Scorecard } from './Scorecard.js';
+import { Scoreboard } from './Scoreboard.js';
+import { gameConfig } from '../config/gameConfig.js';
 import { CameraControls } from './CameraControls.js';
 import { DomUtils } from '../utils/DomUtils.js';
 
@@ -9,7 +10,7 @@ export class UIManager {
     this.sceneManager = game.sceneManager;
 
     this.directionIndicator = null;
-    this.scorecard = null;
+    this.scoreboard = null;
     this.cameraControls = null;
 
     this.messageElement = null;
@@ -21,9 +22,8 @@ export class UIManager {
     this.directionIndicator = new DirectionIndicator(this.sceneManager);
     this.directionIndicator.create();
 
-    // Create scorecard
-    this.scorecard = new Scorecard();
-    this.scorecard.init();
+    this.scoreboard = new Scoreboard();
+    this.scoreboard.init();
 
     // Create camera controls
     this.cameraControls = new CameraControls(this.sceneManager);
@@ -100,101 +100,35 @@ export class UIManager {
     this.directionIndicator.update(ballPosition, visualDir, true); // true = isSwingFeedback
   }
 
-  updateStrokeDisplay(strokeCount) {
-    this.scorecard.updateStrokes(strokeCount, this.game.par);
+  setAimColor(color) {
+    this.directionIndicator.setAimColor(color);
+  }
+
+  hideAim() {
+    this.directionIndicator.hide();
+  }
+
+  setTurnBanner(player, detail) {
+    this.scoreboard.setBanner(player, detail);
+  }
+
+  updateScoreboard(players, activeId, holeIndex, pars) {
+    this.scoreboard.update(players, activeId, holeIndex, pars);
   }
 
   updateCourseInfo(current, total, par) {
-    this.scorecard.updateCourseInfo(current, total, par);
+    this.scoreboard.updateCourseInfo(current, total, par);
   }
 
-  showHoleComplete(strokesTaken, parValue) {
-    let scoreName = 'Par';
-    let scoreColor = '#FFFFFF';
-
-    if (strokesTaken < parValue - 1) {
-      scoreName = 'Eagle';
-      scoreColor = '#FFD700'; // Gold
-    } else if (strokesTaken === parValue - 1) {
-      scoreName = 'Birdie';
-      scoreColor = '#00FF00'; // Green
-    } else if (strokesTaken === parValue) {
-      scoreName = 'Par';
-      scoreColor = '#FFFFFF'; // White
-    } else if (strokesTaken === parValue + 1) {
-      scoreName = 'Bogey';
-      scoreColor = '#FFA500'; // Orange
-    } else {
-      scoreName = `+${strokesTaken - parValue}`;
-      scoreColor = '#FF0000'; // Red
-    }
-
-    const popup = DomUtils.createPopup({
-      title: 'Hole Complete!',
-      content: `
-        <div style="font-size: 48px; margin: 10px 0; color: ${scoreColor};">${scoreName}</div>
-        <div>Strokes: ${strokesTaken} / Par: ${parValue}</div>
-        <div style="font-size: 20px; margin-top: 20px;">Next hole loading...</div>
-      `,
-      duration: 3000
-    });
+  showHoleResults(players, holeIndex, par) {
+    this.scoreboard.showHoleResults(players, holeIndex, par, gameConfig.players.holeResultsMs - 300);
   }
 
-  showGameComplete(totalScore) {
-    // Calculate final score vs par
-    const totalPar = this.scorecard.getTotalPar();
-    const scoreVsPar = totalScore - totalPar;
-
-    const gameCompleteElement = DomUtils.createElement('div', {
-      position: 'absolute',
-      top: '0',
-      left: '0',
-      width: '100%',
-      height: '100%',
-      backgroundColor: 'rgba(0, 0, 0, 0.9)',
-      color: 'white',
-      display: 'flex',
-      flexDirection: 'column',
-      justifyContent: 'center',
-      alignItems: 'center',
-      fontFamily: 'Arial, sans-serif',
-      fontSize: '24px',
-      zIndex: '2000'
-    });
-
-    gameCompleteElement.innerHTML = `
-      <h1 style="font-size: 48px; margin-bottom: 30px;">Game Complete!</h1>
-      <div style="font-size: 36px; margin-bottom: 20px;">Final Score: ${scoreVsPar > 0 ? '+' + scoreVsPar : scoreVsPar}</div>
-      <div style="margin-bottom: 10px;">Total Strokes: ${totalScore}</div>
-      <div style="margin-bottom: 30px;">Course Par: ${totalPar}</div>
-      <button id="restartButton" style="padding: 15px 30px; font-size: 20px; background-color: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer;">Play Again</button>
-    `;
-
-    document.body.appendChild(gameCompleteElement);
-
-    // Add restart button functionality
-    document.getElementById('restartButton').addEventListener('click', () => {
-      document.body.removeChild(gameCompleteElement);
-
-      // Reset game state and start over
-      window.location.reload();
-    });
+  showGameComplete(standings, pars) {
+    this.scoreboard.showGameComplete(standings, pars);
   }
 
-  update() {
-    // Update camera to follow ball if mode is enabled
-    if (this.cameraControls && this.cameraControls.followBallMode) {
-      const ballPosition = this.game.courseManager.getBallPosition();
-      if (ballPosition) {
-        this.sceneManager.setFollowMode(ballPosition, true);
-      }
-    }
-
-    // Update direction indicator visibility
-    if (this.directionIndicator && this.game.ballInMotion) {
-      this.directionIndicator.hide();
-    }
-  }
+  update() {}
 
   addDebugControls() {
     // Reset Ball button
@@ -212,7 +146,8 @@ export class UIManager {
     }, 'Reset Ball');
 
     resetButton.addEventListener('click', () => {
-      this.game.resetBall();
+      const p = this.game.players.get(this.game.activeId);
+      if (p && p.lastLie) this.game.courseManager.placeActiveBall(p.lastLie.x, p.lastLie.z);
     });
 
     document.body.appendChild(resetButton);
@@ -232,15 +167,7 @@ export class UIManager {
     }, 'Push Ball Forward');
 
     pushButton.addEventListener('click', () => {
-      const ballPosition = this.game.courseManager.getBallPosition();
-      if (ballPosition) {
-        this.game.handlePutt({
-          x: 0,
-          y: 0.1,
-          z: 3,
-          power: 0.5
-        });
-      }
+      this.game.handlePutt({ playerId: this.game.activeId, power: 0.5, deviation: 0 });
     });
 
     document.body.appendChild(pushButton);

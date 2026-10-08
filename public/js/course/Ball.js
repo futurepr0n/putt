@@ -3,9 +3,11 @@ const CANNON = window.CANNON;
 import { gameConfig } from '../config/gameConfig.js';
 
 export class Ball {
-  constructor(sceneManager, physicsManager) {
+  constructor(sceneManager, physicsManager, color = 0xFFFFFF) {
     this.sceneManager = sceneManager;
     this.physicsManager = physicsManager;
+    this.color = color;
+    this.marked = false;
     
     this.ballRadius = 0.08;
     this.ballMesh = null;
@@ -36,9 +38,10 @@ export class Ball {
     
     // Ball material with highlight for visibility
     const ballMaterial = new THREE.MeshStandardMaterial({ 
-      color: 0xFFFFFF,
-      emissive: 0xAAAAAA,
-      emissiveIntensity: 0.2,
+      color: this.color,
+      emissive: this.color,
+      emissiveIntensity: 0.15,
+      transparent: true,
       roughness: 0.3,
       metalness: 0.2
     });
@@ -119,6 +122,31 @@ export class Ball {
     v.x *= scale;
     v.z *= scale;
     body.angularVelocity.scale(scale, body.angularVelocity);
+  }
+
+  // Marked ball (golf etiquette while another player putts): see-through and can't be hit
+  setMarked(marked) {
+    if (!this.ballBody || this.marked === marked) return;
+    this.marked = marked;
+    const body = this.ballBody;
+    body.velocity.set(0, 0, 0);
+    body.angularVelocity.set(0, 0, 0);
+    body.collisionResponse = !marked;
+    body.type = marked ? CANNON.Body.KINEMATIC : CANNON.Body.DYNAMIC;
+    if (!marked) {
+      // Settle back onto the surface in case the lie drifted
+      body.position.y = Math.max(body.position.y, this.ballRadius);
+      body.wakeUp();
+    }
+    if (this.ballMesh) this.ballMesh.material.opacity = marked ? 0.35 : 1;
+  }
+
+  setPosition(x, z) {
+    if (!this.ballBody) return;
+    this.ballBody.position.set(x, this.ballRadius + 0.01, z);
+    this.ballBody.velocity.set(0, 0, 0);
+    this.ballBody.angularVelocity.set(0, 0, 0);
+    if (this.ballMesh) this.ballMesh.scale.set(1, 1, 1);
   }
 
   stop() {

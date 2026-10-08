@@ -24,6 +24,16 @@ export class SceneManager {
     this.ambientLight = null;
     this.directionalLight = null;
     this.controls = null;
+
+    // Camera director: frames the active ball from behind its aim line
+    this.director = {
+      enabled: true,
+      paused: false, // User grabbed the camera; resumes on the next turn
+      target: new THREE.Vector3(0, 0, 0),
+      angle: 0,
+      distance: 4.5,
+      height: 3.2
+    };
   }
   
   init() {
@@ -67,6 +77,40 @@ export class SceneManager {
     this.controls.maxDistance = 30;
     this.controls.target.set(0, 0, 0);
     this.controls.update();
+    this.controls.addEventListener('start', () => {
+      this.director.paused = true;
+    });
+  }
+
+  // Frame a point from behind the given aim angle. resume=false keeps a user's manual camera.
+  focusOn(position, angle, resume = true) {
+    if (!position) return;
+    this.director.target.set(position.x, 0, position.z);
+    this.director.angle = angle;
+    if (resume) this.director.paused = false;
+  }
+
+  // Track a moving ball without changing the viewing angle
+  followTarget(position) {
+    if (position) this.director.target.set(position.x, 0, position.z);
+  }
+
+  setDirectorEnabled(enabled) {
+    this.director.enabled = enabled;
+    this.director.paused = false;
+  }
+
+  updateDirector(dt) {
+    const d = this.director;
+    if (!d.enabled || d.paused || !this.controls || dt <= 0) return;
+    const k = 1 - Math.exp(-dt * 3);
+    const desired = new THREE.Vector3(
+      d.target.x - Math.sin(d.angle) * d.distance,
+      d.height,
+      d.target.z - Math.cos(d.angle) * d.distance
+    );
+    this.camera.position.lerp(desired, k);
+    this.controls.target.lerp(d.target, k);
   }
   
   add(object) {
@@ -106,22 +150,11 @@ export class SceneManager {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
   }
   
-  render() {
+  render(dt = 0) {
+    this.updateDirector(dt);
     if (this.controls) {
       this.controls.update();
     }
     this.renderer.render(this.scene, this.camera);
-  }
-  
-  setFollowMode(target, enabled) {
-    if (!this.controls || !target) return;
-    
-    if (enabled) {
-      this.controls.target.copy(target);
-    } else {
-      this.controls.target.set(0, 0, 0);
-    }
-    
-    this.controls.update();
   }
 }

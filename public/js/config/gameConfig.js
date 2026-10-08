@@ -3,6 +3,15 @@ export const gameConfig = {
   totalCourses: 5,
   resetDelay: 8000, // 8 seconds before ball auto-resets if stuck
 
+  // Multiplayer
+  players: {
+    maxStrokes: 8, // Pick up at this many strokes
+    disconnectGraceMs: 60000, // Picked up for the hole after being away this long
+    minShotMs: 600, // A shot can't end sooner than this (lets the ball get moving)
+    holeResultsMs: 5000, // How long hole results show before the next hole
+    colors: [0xffffff, 0xff4d4d, 0x4da6ff, 0xffd633, 0xb366ff, 0xff9933, 0x33ddaa, 0xff66cc]
+  },
+
   // Course settings
   courseSize: {
     width: 8,

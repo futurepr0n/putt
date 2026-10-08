@@ -51,6 +51,43 @@
       color: white;
       height: 140px; /* Putt button slightly larger */
     }
+    #turnBanner {
+      width: 90%;
+      padding: 14px 10px;
+      border-radius: 10px;
+      text-align: center;
+      font-size: 22px;
+      font-weight: bold;
+      background-color: rgba(0, 0, 0, 0.45);
+      box-sizing: border-box;
+    }
+    #turnBanner.my-turn {
+      background-color: #FFC107;
+      color: #222;
+    }
+    #playerBadge {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      margin-right: 8px;
+      vertical-align: middle;
+      background-color: transparent;
+      border: 2px solid white;
+    }
+    .button-container.locked .button {
+      opacity: 0.35;
+      pointer-events: none;
+    }
+    #nameInput {
+      width: 80%;
+      font-size: 20px;
+      padding: 12px;
+      border-radius: 8px;
+      border: none;
+      margin-bottom: 12px;
+      text-align: center;
+    }
     #permissionButton {
       height: 60px;
       background-color: #FF9800;
@@ -127,18 +164,21 @@
 </head>
 <body>
   <div id="roomInfo">
-    <h2>Mini Golf Controller</h2>
+    <h2><span id="playerBadge"></span>Mini Golf Controller</h2>
   </div>
+
+  <div id="turnBanner">Joining...</div>
   
   <div id="statusDisplay">Loading...</div>
   
   <div class="permission-section" id="permissionSection">
-    <h3>Enable Sensors</h3>
-    <button id="permissionButton" class="button">TAP TO ENABLE</button>
+    <h3>Your Name</h3>
+    <input id="nameInput" type="text" maxlength="16" placeholder="Player name" autocomplete="nickname">
+    <button id="permissionButton" class="button">JOIN &amp; ENABLE SENSORS</button>
     <p class="ios-note">Required for aiming and putting</p>
   </div>
   
-  <div class="button-container" id="controlsSection" style="display:none;">
+  <div class="button-container locked" id="controlsSection" style="display:none;">
     <button id="aimButton" class="button">HOLD TO SET ANGLE</button>
     <button id="puttButton" class="button">HOLD TO PUTT</button>
   </div>

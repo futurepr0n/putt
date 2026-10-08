@@ -11,11 +11,33 @@ const permissionButton = document.getElementById('permissionButton');
 const permissionSection = document.getElementById('permissionSection');
 const controlsSection = document.getElementById('controlsSection'); // Container for controls
 const debugInfo = document.getElementById('debugInfo');
+const turnBanner = document.getElementById('turnBanner');
+const playerBadge = document.getElementById('playerBadge');
+const nameInput = document.getElementById('nameInput');
 
 // Global State
 let motionPermissionGranted = false;
 let currentOrientation = { alpha: 0, beta: 0, gamma: 0 };
 let socket = io();
+
+// Player identity: a stable id per phone so reconnecting keeps your ball and score
+function storageGet(key) {
+  try { return localStorage.getItem(key); } catch (e) { return null; }
+}
+function storageSet(key, value) {
+  try { localStorage.setItem(key, value); } catch (e) { /* private mode */ }
+}
+function makeClientId() {
+  const bytes = new Uint8Array(12);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
+const clientId = storageGet('putt.clientId') || makeClientId();
+storageSet('putt.clientId', clientId);
+let playerName = storageGet('putt.name') || '';
+let myPlayerId = null;
+let hasJoined = false;
+let isMyTurn = false;
 
 // Aiming State
 let isAiming = false;
@@ -80,7 +102,7 @@ function emitAimDelta(deltaDeg) {
 // --- 2. Aiming Logic ---
 
 function startAiming() {
-  if (isAiming) return;
+  if (isAiming || !isMyTurn) return;
   isAiming = true;
   aimBaseAlpha = currentOrientation.alpha;
   aimButton.style.backgroundColor = '#1976D2'; // Darker Blue
@@ -118,6 +140,7 @@ function stopAiming() {
 let swingInterval = null;
 
 function startPutt() {
+  if (!isMyTurn) return;
   isPutting = true;
   puttStartTime = Date.now();
   orientationHistory = [];
@@ -363,6 +386,7 @@ function gyroImpactSpeed(axis, apexTime, impactTime) {
 // --- 4. Setup & Permissions ---
 
 window.addEventListener('DOMContentLoaded', () => {
+  if (nameInput) nameInput.value = playerName;
   // Add Listeners
   if (aimButton) {
     aimButton.addEventListener('touchstart', (e) => { e.preventDefault(); startAiming(); });
@@ -380,6 +404,15 @@ window.addEventListener('DOMContentLoaded', () => {
 
   if (permissionButton) permissionButton.addEventListener('click', requestPermissions);
 });
+
+function joinGame() {
+  playerName = (nameInput.value || '').trim().slice(0, 16) || playerName || 'Player';
+  storageSet('putt.name', playerName);
+  hasJoined = true;
+  if (socket.connected && roomId) {
+    socket.emit('joinRoom', { roomId, role: 'controller', clientId, name: playerName });
+  }
+}
 
 function requestPermissions() {
   if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
@@ -406,7 +439,8 @@ function enableControls() {
   motionPermissionGranted = true;
   permissionSection.style.display = 'none';
   controlsSection.style.display = 'flex'; // Show buttons
-  statusDisplay.textContent = "Ready. Set Angle then Putt.";
+  statusDisplay.textContent = "Joined! Wait for your turn.";
+  joinGame();
 
   // Use a single source: mixing relative and absolute alpha makes the aim jump
   const eventName = 'ondeviceorientationabsolute' in window ? 'deviceorientationabsolute' : 'deviceorientation';
@@ -425,15 +459,77 @@ function debug(msg) {
 socket.on('connect', () => {
   connectionStatus.textContent = 'Connected';
   connectionStatus.className = 'connected';
-  if (roomId) socket.emit('joinRoom', roomId);
+  if (hasJoined) joinGame();
+  else turnBanner.textContent = 'Enter your name to join';
+});
+
+socket.on('disconnect', () => {
+  connectionStatus.textContent = 'Reconnecting...';
+  connectionStatus.className = 'disconnected';
+  setMyTurn(false);
+  turnBanner.textContent = 'Reconnecting...';
 });
 
 socket.on('roomJoined', (data) => {
   roomId = data.roomId;
-  connectionStatus.textContent = `Room: ${roomId}`;
+  myPlayerId = data.playerId;
+  connectionStatus.textContent = `Room: ${roomId} · ${playerName}`;
 });
 
-const statusVibration = { putt_accepted: 40, putt_rejected: [30, 60, 30], hole_complete: [80, 60, 160] };
+socket.on('roomError', (data) => {
+  setMyTurn(false);
+  turnBanner.textContent = data.message;
+});
+
+// Cancel any half-finished aim or swing without sending it
+function cancelInput() {
+  if (isAiming) {
+    isAiming = false;
+    clearInterval(aimInterval);
+    aimButton.style.backgroundColor = '#2196F3';
+    aimButton.textContent = 'HOLD TO SET ANGLE';
+  }
+  if (isPutting) {
+    isPutting = false;
+    clearInterval(swingInterval);
+    puttButton.style.backgroundColor = '#4CAF50';
+    puttButton.textContent = 'HOLD TO PUTT';
+  }
+}
+
+function setMyTurn(mine) {
+  if (!mine && isMyTurn) cancelInput();
+  isMyTurn = mine;
+  controlsSection.classList.toggle('locked', !mine);
+  turnBanner.classList.toggle('my-turn', mine);
+}
+
+socket.on('turn', (turn) => {
+  if (!turn || !myPlayerId) return;
+  const me = Array.isArray(turn.players) ? turn.players.find(p => p.playerId === myPlayerId) : null;
+  if (me) playerBadge.style.backgroundColor = me.color;
+
+  const mine = turn.playerId === myPlayerId && turn.phase === 'aiming';
+  const wasMine = isMyTurn;
+  setMyTurn(mine);
+
+  if (mine) {
+    turnBanner.textContent = `YOUR TURN · Hole ${turn.hole} · Stroke ${me ? me.strokes + 1 : ''}`;
+    if (!wasMine && navigator.vibrate) navigator.vibrate([60, 40, 60]);
+  } else if (turn.phase === 'game_over') {
+    turnBanner.textContent = 'Round complete!';
+  } else if (turn.phase === 'between_holes') {
+    turnBanner.textContent = `Hole ${turn.hole} complete`;
+  } else if (turn.playerId) {
+    turnBanner.textContent = `${turn.name} is up · Hole ${turn.hole}`;
+  } else if (me && (me.holed || me.pickedUp)) {
+    turnBanner.textContent = 'Done this hole · waiting for others';
+  } else {
+    turnBanner.textContent = 'Waiting for players...';
+  }
+});
+
+const statusVibration = { putt_accepted: 40, putt_rejected: [30, 60, 30], not_your_turn: [30, 60, 30], holed: [80, 60, 160] };
 
 socket.on('game_status', (data) => {
   if (isPutting || isAiming) return;

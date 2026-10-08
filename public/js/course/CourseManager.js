@@ -15,7 +15,8 @@ export class CourseManager {
     this.physicsManager = physicsManager;
 
     this.courseSize = gameConfig.courseSize;
-    this.ball = null;
+    this.balls = new Map(); // playerId -> Ball
+    this.ball = null; // Ball of the player whose shot it is
     this.hole = null;
     this.tee = null;
     this.obstacles = [];
@@ -52,11 +53,6 @@ export class CourseManager {
     // Create safety floors
     this.createSafetyFloors();
 
-    // Create ball at the tee position
-    this.createBall(0, 0.5, -this.courseSize.length / 2 + 3);
-
-    // Set up contact detection
-    this.setupContactDetection();
     this.setupHoleDetection();
 
     // Add obstacles based on course number
@@ -90,9 +86,50 @@ export class CourseManager {
     this.tee.create(x, z);
   }
 
-  createBall(x, y, z) {
-    this.ball = new Ball(this.sceneManager, this.physicsManager);
-    this.ball.create(x, y, z);
+  // Ball enters play on the tee when its player first tees off
+  spawnBall(playerId, color) {
+    if (this.balls.has(playerId)) return this.balls.get(playerId);
+    const tee = this.tee.getPosition();
+    const ball = new Ball(this.sceneManager, this.physicsManager, color);
+    ball.create(tee.x, -0.5 + ball.ballRadius + 0.01, tee.z);
+    this.balls.set(playerId, ball);
+    return ball;
+  }
+
+  getBall(playerId) {
+    return this.balls.get(playerId) || null;
+  }
+
+  removeBall(playerId) {
+    const ball = this.balls.get(playerId);
+    if (!ball) return;
+    ball.remove();
+    this.balls.delete(playerId);
+    if (this.ball === ball) this.ball = null;
+  }
+
+  // Active ball is live; every other ball is marked (see-through, no collisions)
+  setActiveBall(playerId) {
+    this.ball = this.balls.get(playerId) || null;
+    for (const [id, ball] of this.balls) ball.setMarked(id !== playerId);
+    this.ballSunk = false;
+    this.prevBallPos = null;
+    this.lippingOut = false;
+  }
+
+  distanceToHole(playerId) {
+    const ball = this.balls.get(playerId);
+    const pos = ball ? ball.getPosition() : this.tee.getPosition();
+    return Math.hypot(pos.x - this.hole.holeCenterX, pos.z - this.hole.holeCenterZ);
+  }
+
+  allBallsAtRest(threshold = 0.05) {
+    for (const ball of this.balls.values()) {
+      if (ball.marked) continue;
+      const v = ball.getVelocity();
+      if (v && Math.hypot(v.x, v.y, v.z) > threshold) return false;
+    }
+    return true;
   }
 
   createBoundaries() {
@@ -203,29 +240,6 @@ export class CourseManager {
     }
   }
 
-  setupContactDetection() {
-    this.physicsManager.addContactDetection((event) => {
-      const bodyA = event.bodyA;
-      const bodyB = event.bodyB;
-
-      // Check for safety floor contacts
-      if ((bodyA === this.ball.ballBody && bodyB.isSafetyFloor) ||
-        (bodyB === this.ball.ballBody && bodyA.isSafetyFloor)) {
-
-        if (this.ball.ballBody.velocity.y < -5) {
-          console.log("Ball hit safety floor with high velocity");
-          this.ball.ballBody.velocity.y = Math.abs(this.ball.ballBody.velocity.y) * 0.5;
-
-          if (this.ball.ballBody.position.y < -10) {
-            this.resetBallToTee();
-          }
-        }
-      }
-
-
-    });
-  }
-
   setupHoleDetection() {
     this.ballSunk = false;
     this.prevBallPos = null;
@@ -306,6 +320,13 @@ export class CourseManager {
     if (this.ball) this.ball.stop();
   }
 
+  placeActiveBall(x, z) {
+    if (!this.ball) return;
+    this.ball.setPosition(x, z);
+    this.prevBallPos = null;
+    this.lippingOut = false;
+  }
+
   startHoleAnimation() {
     if (this.holeInProgress) return;
     this.holeInProgress = true;
@@ -318,22 +339,6 @@ export class CourseManager {
 
   isHoleInProgress() {
     return this.holeInProgress;
-  }
-
-  resetBallToTee() {
-    if (!this.ball || !this.tee) return;
-
-    const teePosition = this.tee.getPosition();
-    this.ball.reset();
-
-    // Update ball position to tee position
-    this.ball.ballBody.position.set(
-      teePosition.x,
-      0.5,
-      teePosition.z
-    );
-    this.prevBallPos = null;
-    this.lippingOut = false;
   }
 
   puttBall(angle, power) {
@@ -353,9 +358,7 @@ export class CourseManager {
   }
 
   setDebugVisibility(visible) {
-    if (this.ball) {
-      this.ball.setDebugVisibility(visible);
-    }
+    for (const ball of this.balls.values()) ball.setDebugVisibility(visible);
   }
 
   clearCourse() {
@@ -368,11 +371,9 @@ export class CourseManager {
     this.prevBallPos = null;
     this.lippingOut = false;
 
-    // Remove ball
-    if (this.ball) {
-      this.ball.remove();
-      this.ball = null;
-    }
+    for (const ball of this.balls.values()) ball.remove();
+    this.balls.clear();
+    this.ball = null;
 
     // Remove hole
     if (this.hole) {

@@ -66,7 +66,10 @@ app.get('/create-room', (req, res) => {
   const roomId = uuidv4().substring(0, 8); // Create a shorter room ID
   gameRooms.set(roomId, { 
     createdAt: Date.now(),
-    players: 0,
+    connections: 0,
+    roster: new Map(),
+    activePlayerId: null,
+    lastTurn: null,
     gameType: 'minigolf',
     lastActivity: Date.now()
   });
@@ -97,169 +100,168 @@ function cleanupExpiredRooms() {
   const expiryTime = Date.now() - (config.roomExpiryHours * 60 * 60 * 1000);
   
   for (const [roomId, roomData] of gameRooms.entries()) {
-    if (roomData.lastActivity < expiryTime && roomData.players === 0) {
+    if (roomData.lastActivity < expiryTime && roomData.connections <= 0) {
       gameRooms.delete(roomId);
     }
   }
 }
 
-// Socket.io connection handling
+// Socket.io rooms: `${roomId}:game` holds game screens, `${roomId}:ctrl` holds player controllers
+const gameChannel = (roomId) => `${roomId}:game`;
+const ctrlChannel = (roomId) => `${roomId}:ctrl`;
+
+function cleanName(name) {
+  const s = typeof name === 'string' ? name.replace(/[<>&"'`]/g, '').trim().slice(0, 16) : '';
+  return s || 'Player';
+}
+
+function cleanId(id) {
+  return typeof id === 'string' && /^[A-Za-z0-9_-]{6,64}$/.test(id) ? id : null;
+}
+
+function rosterOf(roomData) {
+  return Array.from(roomData.roster.entries()).map(([playerId, p]) => ({
+    playerId, name: p.name, connected: p.connected
+  }));
+}
+
 io.on('connection', (socket) => {
   let currentRoom = null;
-  
+  let role = null;
+  let playerId = null;
+
   console.log('A client connected:', socket.id);
 
-  // Join a specific room
-  socket.on('joinRoom', (roomId) => {
-    // Validate if room exists
-    if (!gameRooms.has(roomId)) {
+  socket.on('joinRoom', (payload) => {
+    // Legacy form: joinRoom(roomId) from the game screen
+    const req = typeof payload === 'string' ? { roomId: payload, role: 'game' } : (payload || {});
+    const roomId = req.roomId;
+
+    if (typeof roomId !== 'string' || !gameRooms.has(roomId)) {
       socket.emit('roomError', { message: 'Room does not exist' });
       return;
     }
-    
-    // Leave previous room if any
     if (currentRoom) {
-      socket.leave(currentRoom);
-      const roomData = gameRooms.get(currentRoom);
-      if (roomData) {
-        roomData.players--;
-        gameRooms.set(currentRoom, roomData);
-      }
+      socket.emit('roomError', { message: 'Already joined a room' });
+      return;
     }
-    
-    // Join new room
-    socket.join(roomId);
-    currentRoom = roomId;
-    
-    // Update room data
+
     const roomData = gameRooms.get(roomId);
-    roomData.players++;
+    currentRoom = roomId;
+    roomData.connections++;
     roomData.lastActivity = Date.now();
-    gameRooms.set(roomId, roomData);
-    
-    console.log(`Client ${socket.id} joined room ${roomId}`);
-    socket.emit('roomJoined', { 
-      roomId, 
+
+    if (req.role === 'controller') {
+      playerId = cleanId(req.clientId) || uuidv4();
+      role = 'controller';
+      const existing = roomData.roster.get(playerId);
+      if (existing && existing.connected && existing.socketId !== socket.id) {
+        // Same phone reconnecting (or a duplicate tab): newest connection wins
+        io.to(existing.socketId).emit('roomError', { message: 'This player connected from another tab' });
+      }
+      roomData.roster.set(playerId, { name: cleanName(req.name), socketId: socket.id, connected: true });
+      socket.join(ctrlChannel(roomId));
+      socket.to(gameChannel(roomId)).emit('player_joined', { playerId, name: roomData.roster.get(playerId).name });
+    } else {
+      role = 'game';
+      socket.join(gameChannel(roomId));
+      socket.emit('roster', rosterOf(roomData));
+    }
+
+    console.log(`Client ${socket.id} joined room ${roomId} as ${role}`);
+    socket.emit('roomJoined', {
+      roomId,
+      playerId,
       gameType: roomData.gameType || 'minigolf',
       domain: config.domain,
       protocol: config.protocol
     });
+    if (role === 'controller' && roomData.lastTurn) socket.emit('turn', roomData.lastTurn);
   });
+
+  // Controller input is tagged with the sender and only accepted from the player whose turn it is
+  function forwardInput(eventName, data) {
+    if (role !== 'controller' || !currentRoom) return;
+    const roomData = gameRooms.get(currentRoom);
+    if (!roomData) return;
+    if (roomData.activePlayerId !== playerId) {
+      if (eventName === 'throw' || eventName === 'aim_start') {
+        socket.emit('game_status', { state: 'not_your_turn', message: 'Not your turn yet' });
+      }
+      return;
+    }
+    roomData.lastActivity = Date.now();
+    socket.to(gameChannel(currentRoom)).emit(eventName, { ...data, playerId });
+  }
+
+  const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
 
   socket.on('orientation', (data) => {
-    if (!currentRoom) {
-      return;
-    }
-    
-    // Validate the orientation data
-    if (data && typeof data === 'object' && 
-        'x' in data && 'y' in data && 'z' in data &&
-        !isNaN(data.x) && !isNaN(data.y) && !isNaN(data.z)) {
-      
-      // Forward the orientation data to all clients in the room
-      // Use socket.to() to only send to others (not back to sender)
-      socket.to(currentRoom).emit('orientation', data);
+    if (data && isNum(data.x) && isNum(data.y) && isNum(data.z)) {
+      forwardInput('orientation', { x: data.x, y: data.y, z: data.z });
     }
   });
 
-
-
-  socket.on('aim_start', () => {
-    if (currentRoom) socket.to(currentRoom).emit('aim_start');
-  });
-
-  socket.on('aim_end', () => {
-    if (currentRoom) socket.to(currentRoom).emit('aim_end');
-  });
+  socket.on('aim_start', () => forwardInput('aim_start', {}));
+  socket.on('aim_end', () => forwardInput('aim_end', {}));
 
   socket.on('swing_data', (data) => {
-    if (!currentRoom || !data || typeof data !== 'object') return;
-    const deviation = Number(data.deviation);
-    const power = Number(data.power);
-    if (!Number.isFinite(deviation) || !Number.isFinite(power)) return;
-    socket.to(currentRoom).emit('swing_data', { deviation, power });
+    if (data && isNum(data.deviation) && isNum(data.power)) {
+      forwardInput('swing_data', { deviation: data.deviation, power: data.power });
+    }
   });
 
-  // Game -> controller feedback (putt accepted/rejected, ball ready, hole complete)
+  socket.on('throw', (data) => {
+    if (data && isNum(data.power)) {
+      forwardInput('throw', { power: data.power, deviation: isNum(data.deviation) ? data.deviation : 0 });
+    }
+  });
+
+  // --- Game screen -> controllers ---
+
+  socket.on('turn', (data) => {
+    if (role !== 'game' || !currentRoom || !data || typeof data !== 'object') return;
+    const roomData = gameRooms.get(currentRoom);
+    if (!roomData) return;
+    roomData.activePlayerId = typeof data.playerId === 'string' ? data.playerId : null;
+    roomData.lastTurn = data;
+    roomData.lastActivity = Date.now();
+    socket.to(ctrlChannel(currentRoom)).emit('turn', data);
+  });
+
   socket.on('game_status', (data) => {
-    if (!currentRoom || !data || typeof data.state !== 'string') return;
-    socket.to(currentRoom).emit('game_status', {
+    if (role !== 'game' || !currentRoom || !data || typeof data.state !== 'string') return;
+    const msg = {
       state: data.state.slice(0, 32),
       message: typeof data.message === 'string' ? data.message.slice(0, 120) : ''
-    });
-  });
-
-  // When the controller sends a putt (still using 'throw' event for compatibility)
-  socket.on('throw', (data) => {
-    if (!currentRoom) {
-      console.error('Putt received but client is not in a room');
-      return;
-    }
-    
-    // Update room activity
+    };
     const roomData = gameRooms.get(currentRoom);
-    if (roomData) {
-      roomData.lastActivity = Date.now();
-      gameRooms.set(currentRoom, roomData);
-    }
-    
-    console.log(`Received putt data in room ${currentRoom}:`, data);
-    
-    // Validate the putt data
-    if (data && typeof data === 'object' && 
-        'x' in data && 'y' in data && 'z' in data &&
-        !isNaN(data.x) && !isNaN(data.y) && !isNaN(data.z)) {
-      
-      // Send the putt data only to clients in this room
-      socket.to(currentRoom).emit('throw', data);
+    const target = data.to && roomData && roomData.roster.get(data.to);
+    if (target) {
+      if (target.connected) io.to(target.socketId).emit('game_status', msg);
     } else {
-      console.error('Invalid putt data received:', data);
-    }
-  });
-
-  // Game events
-  socket.on('holeComplete', (data) => {
-    if (currentRoom) {
-      // Update room activity
-      updateRoomActivity(currentRoom);
-      
-      // Broadcast to everyone in the room except sender
-      socket.to(currentRoom).emit('holeComplete', data);
-    }
-  });
-
-  socket.on('gameComplete', (data) => {
-    if (currentRoom) {
-      // Update room activity
-      updateRoomActivity(currentRoom);
-      
-      // Broadcast to everyone in the room except sender
-      socket.to(currentRoom).emit('gameComplete', data);
+      socket.to(ctrlChannel(currentRoom)).emit('game_status', msg);
     }
   });
 
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
-    
-    // Update room players count
-    if (currentRoom && gameRooms.has(currentRoom)) {
-      const roomData = gameRooms.get(currentRoom);
-      roomData.players--;
-      roomData.lastActivity = Date.now();
-      gameRooms.set(currentRoom, roomData);
+    if (!currentRoom || !gameRooms.has(currentRoom)) return;
+
+    const roomData = gameRooms.get(currentRoom);
+    roomData.connections--;
+    roomData.lastActivity = Date.now();
+
+    if (role === 'controller') {
+      const player = roomData.roster.get(playerId);
+      // Ignore if this player already reconnected on a newer socket
+      if (player && player.socketId === socket.id) {
+        player.connected = false;
+        socket.to(gameChannel(currentRoom)).emit('player_left', { playerId });
+      }
     }
   });
-  
-  // Helper to update room activity timestamp
-  function updateRoomActivity(roomId) {
-    const roomData = gameRooms.get(roomId);
-    if (roomData) {
-      roomData.lastActivity = Date.now();
-      gameRooms.set(roomId, roomData);
-    }
-  }
 });
-
 
 
 // Schedule cleanup every hour
