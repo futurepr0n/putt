@@ -14,7 +14,7 @@ const debugInfo = document.getElementById('debugInfo');
 
 // Global State
 let motionPermissionGranted = false;
-let currentOrientation = { alpha: 0, beta: 0, gamma: 0, absolute: 0, heading: 0 };
+let currentOrientation = { alpha: 0, beta: 0, gamma: 0 };
 let socket = io();
 
 // Aiming State
@@ -37,14 +37,7 @@ function handleOrientation(event) {
   if (event.beta !== null) currentOrientation.beta = event.beta;
   if (event.gamma !== null) currentOrientation.gamma = event.gamma;
 
-  // High-precision sources
-  if (event.webkitCompassHeading) currentOrientation.heading = event.webkitCompassHeading;
-  if (event.absolute === true && event.alpha !== null) currentOrientation.absolute = event.alpha;
-
-  // Debug spew for verifying sensors
-  // debug(`A:${currentOrientation.alpha?.toFixed(0)} B:${currentOrientation.beta?.toFixed(0)} G:${currentOrientation.gamma?.toFixed(0)}`);
-
-  if (isPutting && isPutting === true) {
+  if (isPutting) {
     // Record high-freq history for swing analysis
     orientationHistory.push({
       beta: currentOrientation.beta,
@@ -55,11 +48,20 @@ function handleOrientation(event) {
   }
 }
 
-// Get the best available compass heading (0-360, 0=North typically, or relative start)
-function getCompassHeading() {
-  if (currentOrientation.heading !== undefined) return currentOrientation.heading;
-  if (currentOrientation.absolute !== undefined) return currentOrientation.absolute;
-  return currentOrientation.alpha || 0;
+// Turn of the phone since aiming began, in degrees (-180..180, positive = turned left)
+let aimBaseAlpha = 0;
+
+function wrapDegrees(deg) {
+  return ((deg + 540) % 360) - 180;
+}
+
+function getAimDelta() {
+  return wrapDegrees(currentOrientation.alpha - aimBaseAlpha);
+}
+
+function emitAimDelta(deltaDeg) {
+  const rad = deltaDeg * (Math.PI / 180);
+  socket.emit('orientation', { x: Math.sin(rad), y: 0, z: Math.cos(rad) });
 }
 
 
@@ -68,26 +70,18 @@ function getCompassHeading() {
 function startAiming() {
   if (isAiming) return;
   isAiming = true;
+  aimBaseAlpha = currentOrientation.alpha;
   aimButton.style.backgroundColor = '#1976D2'; // Darker Blue
   aimButton.textContent = "Aiming...";
 
-  // Notify server we started aiming (for Snap-to-Pin)
+  // Game anchors the arrow's current direction to this phone pose
   socket.emit('aim_start');
 
-  // Start streaming aiming updates
   if (aimInterval) clearInterval(aimInterval);
   aimInterval = setInterval(() => {
-    const heading = getCompassHeading();
-    // Send 'preview' direction to game so arrow rotates
-    const angleRad = heading * (Math.PI / 180);
-    const direction = {
-      x: Math.sin(angleRad),
-      y: 0,
-      z: Math.cos(angleRad)
-    };
-    socket.emit('orientation', direction);
-
-    statusDisplay.innerHTML = `Aiming...<br>Angle: ${heading.toFixed(0)}°<br>(Point phone at screen)`;
+    const delta = getAimDelta();
+    emitAimDelta(delta);
+    statusDisplay.innerHTML = `Aiming...<br>Turn: ${delta.toFixed(0)}°<br>(Rotate phone to adjust)`;
   }, 50);
 }
 
@@ -96,23 +90,14 @@ function stopAiming() {
   isAiming = false;
   clearInterval(aimInterval);
 
-  // Lock the angle
-  lockedAngle = getCompassHeading();
+  lockedAngle = getAimDelta();
 
   aimButton.style.backgroundColor = '#2196F3'; // Original Blue
   aimButton.textContent = `Set! (${lockedAngle.toFixed(0)}°)`;
   statusDisplay.textContent = "Angle Locked. Hold Green to Putt.";
 
+  emitAimDelta(lockedAngle);
   socket.emit('aim_end');
-
-  // Send final locked orientation
-  const angleRad = lockedAngle * (Math.PI / 180);
-  const direction = {
-    x: Math.sin(angleRad),
-    y: 0,
-    z: Math.cos(angleRad)
-  };
-  socket.emit('orientation', direction);
 }
 
 
@@ -329,17 +314,14 @@ function analyzeSwingAndSend(duration) {
   // Golf putt: max speed around 300-400 dps is hard.
   const normalizedPower = Math.min(impactSpeed / 400, 1.5);
 
-  // Construct Vector
-  const finalAngle = lockedAngle + deviation;
-  const finalRad = finalAngle * (Math.PI / 180);
-
-  const baseSpeed = 15 * normalizedPower;
-
+  // Direction is owned by the game's aim arrow; send power plus swing deviation
+  const finalRad = (lockedAngle + deviation) * (Math.PI / 180);
   const velocity = {
-    x: Math.sin(finalRad) * baseSpeed,
-    y: 0.1,
-    z: Math.cos(finalRad) * baseSpeed,
-    power: normalizedPower
+    x: Math.sin(finalRad) * normalizedPower,
+    y: 0,
+    z: Math.cos(finalRad) * normalizedPower,
+    power: Math.min(normalizedPower, 1),
+    deviation
   };
 
   debug(`Swing Valid. Axis:${axis} Apex:${maxDeviation.toFixed(0)} Speed:${impactSpeed.toFixed(0)} Dev:${deviation.toFixed(1)}`);
@@ -397,10 +379,9 @@ function enableControls() {
   controlsSection.style.display = 'flex'; // Show buttons
   statusDisplay.textContent = "Ready. Set Angle then Putt.";
 
-  window.addEventListener('deviceorientation', handleOrientation, true);
-  if ('ondeviceorientationabsolute' in window) {
-    window.addEventListener('deviceorientationabsolute', handleOrientation, true);
-  }
+  // Use a single source: mixing relative and absolute alpha makes the aim jump
+  const eventName = 'ondeviceorientationabsolute' in window ? 'deviceorientationabsolute' : 'deviceorientation';
+  window.addEventListener(eventName, handleOrientation, true);
 }
 
 // --- 5. Utilities ---

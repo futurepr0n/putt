@@ -164,6 +164,22 @@ io.on('connection', (socket) => {
 
 
 
+  socket.on('aim_start', () => {
+    if (currentRoom) socket.to(currentRoom).emit('aim_start');
+  });
+
+  socket.on('aim_end', () => {
+    if (currentRoom) socket.to(currentRoom).emit('aim_end');
+  });
+
+  socket.on('swing_data', (data) => {
+    if (!currentRoom || !data || typeof data !== 'object') return;
+    const deviation = Number(data.deviation);
+    const power = Number(data.power);
+    if (!Number.isFinite(deviation) || !Number.isFinite(power)) return;
+    socket.to(currentRoom).emit('swing_data', { deviation, power });
+  });
+
   // When the controller sends a putt (still using 'throw' event for compatibility)
   socket.on('throw', (data) => {
     if (!currentRoom) {

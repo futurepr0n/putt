@@ -52,8 +52,8 @@ export class SocketManager {
       this.trigger('orientation', data);
     });
     
-    this.socket.on('throw', (data) => {
-      this.trigger('throw', data);
+    ['throw', 'aim_start', 'aim_end', 'swing_data'].forEach((eventName) => {
+      this.socket.on(eventName, (data) => this.trigger(eventName, data));
     });
   }
   

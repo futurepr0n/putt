@@ -13,13 +13,12 @@ export class Game {
     this.strokeCount = 0;
     this.ballInMotion = false;
     this.lastPuttTime = 0;
-    this.lastPuttTime = 0;
     this.courseCompleted = false;
+    this.lastFrameTime = null;
 
-    // Aiming state
-    this.aimOffset = 0;
-    this.pendingSnap = false;
-    this.targetSnapAngle = 0;
+    // Aim angle in world space (radians, atan2(x, z) convention)
+    this.aimAngle = 0;
+    this.aimAnchor = 0;
 
     // Initialize managers
     this.sceneManager = new SceneManager();
@@ -63,16 +62,21 @@ export class Game {
     // Update UI
     this.uiManager.updateCourseInfo(this.currentCourse + 1, gameConfig.totalCourses, this.par);
 
+    this.aimAtHole();
+
     // Set up event listeners
     this.setupEventListeners();
   }
 
-  animate() {
+  animate(time) {
     requestAnimationFrame(this.animate);
 
+    const dt = this.lastFrameTime === null ? 0 : Math.min((time - this.lastFrameTime) / 1000, 0.1);
+    this.lastFrameTime = time;
+
     // Only update physics after everything is initialized
-    if (this.physicsManager && this.physicsManager.world) {
-      this.physicsManager.update();
+    if (this.physicsManager && this.physicsManager.world && dt > 0) {
+      this.physicsManager.update(dt);
     }
 
     // Check game states if initialized
@@ -98,46 +102,45 @@ export class Game {
       return;
     }
 
-    // Use the aimed direction from the UI/Controller if available
-    if (this.uiManager && this.uiManager.lastDirectionData) {
-      const aim = this.uiManager.lastDirectionData;
+    const power = Math.max(0, Math.min(Number(velocityData.power) || 0, 1));
+    const maxDeviation = 15 * Math.PI / 180;
+    const deviation = Math.max(-maxDeviation, Math.min((Number(velocityData.deviation) || 0) * Math.PI / 180, maxDeviation));
 
-      // Calculate the power/magnitude of the physical swing
-      const swingMagnitude = Math.sqrt(
-        velocityData.x * velocityData.x +
-        velocityData.y * velocityData.y +
-        velocityData.z * velocityData.z
-      );
-
-      // Normalize the aim direction
-      const aimMagnitude = Math.sqrt(aim.x * aim.x + aim.z * aim.z);
-
-      if (aimMagnitude > 0) {
-        // Apply swing power to aim direction
-        // We override the x and z components to match the arrow direction
-        // but scale them to match the physical swing power
-        velocityData.x = (aim.x / aimMagnitude) * swingMagnitude;
-        velocityData.z = (aim.z / aimMagnitude) * swingMagnitude;
-        // velocityData.y stays the same (usually small)
-      }
-    }
-
-    // Apply velocity to ball
-    const success = this.courseManager.puttBall(velocityData);
+    const success = this.courseManager.puttBall(this.aimAngle + deviation, power);
 
     if (success) {
       this.ballInMotion = true;
       this.lastPuttTime = Date.now();
       this.strokeCount++;
       this.uiManager.updateStrokeDisplay(this.strokeCount);
-      this.uiManager.showMessage(`Putt power: ${Math.round(velocityData.power * 100)}%`);
+      this.uiManager.showMessage(`Putt power: ${Math.round(power * 100)}%`);
     }
   }
 
   resetBall() {
     this.ballInMotion = false;
     this.courseManager.resetBallToTee();
+    this.aimAtHole();
     this.uiManager.showMessage('Ball reset. Ready for next shot');
+  }
+
+  getAngleToHole() {
+    const ballPos = this.courseManager.getBallPosition();
+    const hole = this.courseManager.hole;
+    if (!ballPos || !hole) return null;
+    return Math.atan2(hole.holeCenterX - ballPos.x, hole.holeCenterZ - ballPos.z);
+  }
+
+  aimAtHole() {
+    const angle = this.getAngleToHole();
+    if (angle === null) return;
+    this.aimAngle = angle;
+    this.aimAnchor = angle;
+    this.refreshAimArrow();
+  }
+
+  refreshAimArrow() {
+    this.uiManager.updateDirectionArrow({ x: Math.sin(this.aimAngle), y: 0, z: Math.cos(this.aimAngle) });
   }
 
   checkBallReset() {
@@ -169,17 +172,15 @@ export class Game {
 
     if (speed < 0.1 && this.ballInMotion && Date.now() - this.lastPuttTime > 2000) {
       this.ballInMotion = false;
+      this.courseManager.stopBall();
+      this.aimAtHole();
       this.uiManager.showMessage('Ready for next shot');
     }
   }
 
   checkBallInHole() {
-    if (!this.courseCompleted && !this.courseManager.isHoleInProgress()) {
-      const isInHole = this.courseManager.checkBallInHole();
-
-      if (isInHole) {
-        this.holeComplete();
-      }
+    if (!this.courseCompleted && this.courseManager.checkBallInHole()) {
+      this.holeComplete();
     }
   }
 
@@ -211,6 +212,7 @@ export class Game {
         this.ballInMotion = false;
         this.strokeCount = 0;
         this.uiManager.updateStrokeDisplay(this.strokeCount);
+        this.aimAtHole();
         this.uiManager.showMessage('Ready for Hole ' + (this.currentCourse + 1));
       } else {
         this.uiManager.showGameComplete(this.totalScore);
@@ -226,32 +228,14 @@ export class Game {
 
   connectSocketEvents() {
     this.socketManager.on('orientation', (data) => {
-      if (!this.ballInMotion && !this.courseCompleted) {
-
-        // Calculate Snap Offset if pending
-        if (this.pendingSnap) {
-          const inputAngle = Math.atan2(data.x, data.z);
-          // Offset = Target - Input
-          this.aimOffset = this.targetSnapAngle - inputAngle;
-          this.pendingSnap = false;
-        }
-
-        // Apply Snap-to-Pin offset
-        if (this.aimOffset !== 0) {
-          // Rotate the input vector by the offset angle
-          const inputAngle = Math.atan2(data.x, data.z);
-          const finalAngle = inputAngle + this.aimOffset;
-
-          const magnitude = Math.sqrt(data.x * data.x + data.z * data.z);
-          data.x = Math.sin(finalAngle) * magnitude;
-          data.z = Math.cos(finalAngle) * magnitude;
-        }
-        this.uiManager.updateDirectionArrow(data);
-      }
+      if (this.ballInMotion || this.courseCompleted) return;
+      // Controller sends phone turn relative to its pose at aim_start
+      this.aimAngle = this.aimAnchor + Math.atan2(data.x, data.z);
+      this.refreshAimArrow();
     });
 
     this.socketManager.on('aim_start', () => {
-      this.handleAimStart();
+      this.aimAnchor = this.aimAngle;
     });
 
     this.socketManager.on('swing_data', (data) => {
@@ -263,37 +247,5 @@ export class Game {
     this.socketManager.on('throw', (velocityData) => {
       this.handlePutt(velocityData);
     });
-  }
-
-  handleAimStart() {
-    // Calculate angle to hole
-    const ballPos = this.courseManager.getBallPosition();
-    const holePos = this.courseManager.hole ? { x: this.courseManager.hole.holeCenterX, z: this.courseManager.hole.holeCenterZ } : null;
-
-    if (ballPos && holePos) {
-      // Vector from ball to hole
-      const dx = holePos.x - ballPos.x;
-      const dz = holePos.z - ballPos.z;
-      // Flip angle by 180 degrees (PI) because "Forward" in Three.js is often -Z
-      // while atan2(dx, dz) points to +Z for (0, 0) -> (0, 1)
-      const angleToHole = Math.atan2(dx, dz) + Math.PI;
-
-      // Current input angle (from the last orientation packet, or assume 0/Forward if undefined)
-      // Look for 'forward' relative to the hole.
-      // Actually, we want to set the offset such that Input Angle + Offset = AngleToHole.
-      // Since we don't know the exact instantaneous input angle *right now* (it comes in stream),
-      // we can assume the user is holding it roughly "forward" (0) when they tap aim,
-      // OR better: we wait for the first orientation packet after aim_start to set the offset.
-      // But to be snappy, let's assume the current stream data is "Forward".
-
-      // Let's rely on the NEXT orientation packet to set the offset? 
-      // or just assume 0 if we haven't received data. 
-      // Ideally, we want the *Result* of the next update to be AngleToHole.
-      // So Offset = AngleToHole - InputAngle.
-
-      // We'll set a flag to calculate offset on next orientation pulse
-      this.pendingSnap = true;
-      this.targetSnapAngle = angleToHole;
-    }
   }
 }

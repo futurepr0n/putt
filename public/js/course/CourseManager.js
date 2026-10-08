@@ -57,6 +57,7 @@ export class CourseManager {
 
     // Set up contact detection
     this.setupContactDetection();
+    this.setupHoleDetection();
 
     // Add obstacles based on course number
     this.addObstacles(courseNumber);
@@ -225,57 +226,84 @@ export class CourseManager {
     });
   }
 
-  checkBallInHole() {
-    if (this.holeInProgress || !this.ball || !this.hole) return false;
+  setupHoleDetection() {
+    this.ballSunk = false;
+    this.prevBallPos = null;
+    this.lippingOut = false;
+    this.holeStepListener = () => this.stepHoleDetection();
+    this.physicsManager.world.addEventListener('postStep', this.holeStepListener);
+  }
 
-    const ballPos = this.ball.ballBody.position;
-    const holeX = this.hole.holeCenterX;
-    const holeZ = this.hole.holeCenterZ;
+  // Runs every physics sub-step so fast putts can't skip over the cup between checks
+  stepHoleDetection() {
+    if (this.holeInProgress || this.ballSunk || !this.ball || !this.ball.ballBody || !this.hole) return;
 
-    // Calculate distance from ball to hole center (horizontal only)
-    const dx = ballPos.x - holeX;
-    const dz = ballPos.z - holeZ;
+    const body = this.ball.ballBody;
+    const pos = body.position;
+    const prev = this.prevBallPos || { x: pos.x, z: pos.z };
+    this.prevBallPos = { x: pos.x, z: pos.z };
+
+    if (pos.y > this.ball.ballRadius + 0.05) return;
+
+    const hx = this.hole.holeCenterX;
+    const hz = this.hole.holeCenterZ;
+    const r = this.hole.holeRadius;
+    const v = body.velocity;
+    const speed = Math.sqrt(v.x * v.x + v.z * v.z);
+
+    // Closest point to the cup centre on the segment travelled this step
+    const sx = pos.x - prev.x;
+    const sz = pos.z - prev.z;
+    const segLenSq = sx * sx + sz * sz;
+    const t = segLenSq > 0 ? Math.max(0, Math.min(1, ((hx - prev.x) * sx + (hz - prev.z) * sz) / segLenSq)) : 1;
+    const cx = prev.x + sx * t;
+    const cz = prev.z + sz * t;
+    const dx = hx - cx;
+    const dz = hz - cz;
     const distance = Math.sqrt(dx * dx + dz * dz);
 
-    // Check if ball is closer enough to hole center and moving
-    const velocity = this.ball.ballBody.velocity;
-    const horizontalSpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
+    if (distance >= r) this.lippingOut = false;
 
-    // Dynamic Magnetism: Stronger suction when close, wider range
-    const magnetismRange = this.hole.holeRadius * 5; // Wide collection area (was 4)
-
-    if (distance < magnetismRange && ballPos.y < 0.3) {
-      // Calculate force direction toward hole
-      const forceFactor = distance < this.hole.holeRadius ? 0.8 : 0.3 * (1 - distance / magnetismRange);
-      // Very strong pull if ON TOP of hole (0.8), gentler further out
-
-      const forceX = -dx * forceFactor;
-      const forceZ = -dz * forceFactor;
-
-      // Apply friction/drag to slow it down for the drop
-      const drag = 1.0 - (0.1 * forceFactor);
-      this.ball.ballBody.velocity.x *= drag;
-      this.ball.ballBody.velocity.z *= drag;
-
-      // Apply the force
-      this.ball.ballBody.applyForce(
-        new CANNON.Vec3(forceX, 0, forceZ),
-        this.ball.ballBody.position
-      );
+    if (distance < r) {
+      // Fast balls catch less of the cup, so require a more central line as speed rises
+      const maxSpeed = gameConfig.hole.maxCaptureSpeed;
+      const effectiveRadius = r * Math.max(0, 1 - speed / maxSpeed);
+      if (distance < effectiveRadius || speed < 0.3) {
+        body.position.set(cx, pos.y, cz);
+        this.ballSunk = true;
+        this.lippingOut = false;
+        this.startHoleAnimation();
+        return;
+      }
+      // Lip-out once per pass: lose some pace and get nudged off line
+      if (this.lippingOut) return;
+      this.lippingOut = true;
+      const lip = Math.sign(dx * sz - dz * sx) || 1;
+      const scale = 0.75;
+      const angle = lip * 0.25 * (1 - distance / r);
+      const cos = Math.cos(angle), sin = Math.sin(angle);
+      const nvx = (v.x * cos + v.z * sin) * scale;
+      const nvz = (-v.x * sin + v.z * cos) * scale;
+      v.x = nvx;
+      v.z = nvz;
+      return;
     }
 
-    // Ball is in hole if it's closer to the center
-    // MODIFIED: Higher speed threshold allowed (easier to sink fast putts)
-    const captureRadius = this.hole.holeRadius * 0.9; // Must be mostly over hole
-
-    if (distance < captureRadius && horizontalSpeed < 6.0 && ballPos.y < 0.25) {
-      // Speed limit increased to 6.0! (Was 3.5)
-      console.log("Ball in hole! Distance:", distance, "Speed:", horizontalSpeed);
-      this.startHoleAnimation();
-      return true;
+    // Gentle assist for slow balls dying near the cup
+    const assistRange = r * gameConfig.hole.assistRadiusFactor;
+    if (distance < assistRange && speed < gameConfig.hole.assistMaxSpeed) {
+      const pull = 1.5 * (1 - distance / assistRange) * this.physicsManager.world.dt;
+      v.x += (dx / distance) * pull;
+      v.z += (dz / distance) * pull;
     }
+  }
 
-    return false;
+  checkBallInHole() {
+    return !!this.ballSunk;
+  }
+
+  stopBall() {
+    if (this.ball) this.ball.stop();
   }
 
   startHoleAnimation() {
@@ -304,45 +332,16 @@ export class CourseManager {
       0.5,
       teePosition.z
     );
+    this.prevBallPos = null;
+    this.lippingOut = false;
   }
 
-  puttBall(velocityData) {
+  puttBall(angle, power) {
     if (!this.ball) return false;
 
-    // Calculate the magnitude of the input velocity
-    const velocityMagnitude = Math.sqrt(
-      velocityData.x * velocityData.x +
-      velocityData.y * velocityData.y +
-      velocityData.z * velocityData.z
-    );
-
-    // Normalize direction
-    const direction = { x: 0, y: 0, z: 1 }; // Default direction (forward)
-    const dirMagnitude = Math.sqrt(
-      velocityData.x * velocityData.x +
-      velocityData.z * velocityData.z
-    );
-
-    if (dirMagnitude > 0) {
-      direction.x = velocityData.x / dirMagnitude;
-      direction.z = velocityData.z / dirMagnitude;
-    }
-
-    // Calculate power
-    const normalizedMagnitude = Math.min(velocityMagnitude / 30, 1);
-    // Apply a power curve: slower at low power, more responsive at mid power
-    const powerCurve = normalizedMagnitude < 0.5 ?
-      normalizedMagnitude * normalizedMagnitude * 2 : // Quadratic for low values
-      normalizedMagnitude; // Linear for higher values
-
-    const forceMagnitude = gameConfig.putt.minForce +
-      powerCurve * (gameConfig.putt.maxForce - gameConfig.putt.minForce);
-
-    // Add power to the velocity data for UI feedback
-    velocityData.power = normalizedMagnitude;
-
-    // Apply putt to ball
-    return this.ball.applyPutt(direction, forceMagnitude);
+    const { minSpeed, maxSpeed, powerExponent } = gameConfig.putt;
+    const speed = minSpeed + (maxSpeed - minSpeed) * Math.pow(power, powerExponent);
+    return this.ball.applyPutt(angle, speed);
   }
 
   getBallPosition() {
@@ -361,6 +360,13 @@ export class CourseManager {
 
   clearCourse() {
     // Remove all objects from the scene and physics world
+    if (this.holeStepListener) {
+      this.physicsManager.world.removeEventListener('postStep', this.holeStepListener);
+      this.holeStepListener = null;
+    }
+    this.ballSunk = false;
+    this.prevBallPos = null;
+    this.lippingOut = false;
 
     // Remove ball
     if (this.ball) {

@@ -38,9 +38,6 @@ export class Hole {
     // Create hole gradient
     this.createHoleGradient(x, z);
 
-    // Create hole gradient
-    this.createHoleGradient(x, z);
-
     // NOTE: We do not create a physics body for the hole anymore
     // to prevent the ball from bouncing off the "sensor" cylinder.
     // Detection is done via distance check in CourseManager.
@@ -53,11 +50,22 @@ export class Hole {
   }
 
   createHoleMesh(x, z) {
-    // Create hole (black circle)
-    const holeGeometry = new THREE.CylinderGeometry(this.holeRadius, this.holeRadius, this.holeDepth, 32);
-    this.holeMesh = new THREE.Mesh(holeGeometry, this.materials.hole);
-    this.holeMesh.position.set(x, 0.01, z); // Slightly above ground to avoid z-fighting
-    this.holeMesh.receiveShadow = true;
+    // Flush cup: dark opening plus a white liner rim, drawn on top of the green
+    const decal = { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 };
+    this.holeMesh = new THREE.Group();
+    this.holeMesh.position.set(x, 0.002, z);
+    this.holeMesh.rotation.x = -Math.PI / 2;
+
+    const opening = new THREE.Mesh(
+      new THREE.CircleGeometry(this.holeRadius, 48),
+      new THREE.MeshBasicMaterial({ color: gameConfig.materials.hole, ...decal })
+    );
+    const rim = new THREE.Mesh(
+      new THREE.RingGeometry(this.holeRadius * 0.92, this.holeRadius, 48),
+      new THREE.MeshBasicMaterial({ color: 0xf2f2f2, ...decal })
+    );
+    rim.position.z = 0.0005;
+    this.holeMesh.add(opening, rim);
     this.sceneManager.add(this.holeMesh);
   }
 
@@ -79,7 +87,7 @@ export class Hole {
 
   createHoleGradient(x, z) {
     // Create a subtle hole gradient around the hole
-    const holeGradientGeometry = new THREE.RingGeometry(this.holeRadius, this.holeRadius * 2, 32);
+    const holeGradientGeometry = new THREE.RingGeometry(this.holeRadius, this.holeRadius * 2, 48);
     const holeGradientMaterial = new THREE.MeshBasicMaterial({
       color: 0x005500,
       transparent: true,
