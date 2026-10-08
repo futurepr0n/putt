@@ -120,16 +120,16 @@ function stopAiming() {
 
 
 // --- 3. Putting Logic ---
-// Hold PUTT -> hold still (address) -> buzz -> swing back and through.
+// AIM sets the line. Holding PUTT records the stroke from the moment it's pressed:
+// backswing size + speed through the ball set the pace, club-face twist sets small left/right.
 // The stroke is read from the gyroscope (see swing.js); the putt is sent at impact + follow-through.
 
 const POWER_SCALES = { soft: 0.8, normal: 1, firm: 1.2 };
 let powerScaleKey = storageGet('putt.powerScale') || 'normal';
 let practiceMode = false;
 
-let puttState = 'idle'; // idle | address | swinging
+let puttState = 'idle'; // idle | swinging
 let puttStartTime = 0;
-let addressSamples = [];
 let strokeSamples = [];
 let maxAccel = 0;
 let lastLiveEmit = 0;
@@ -143,11 +143,7 @@ function powerScale() {
 
 // Every angular-velocity reading (deg/s, device axes) funnels through here
 function onRateSample(sample) {
-  if (puttState === 'address') {
-    addressSamples.push(sample);
-    const waited = sample.t - addressSamples[0].t;
-    if (Swing.isStill(addressSamples, sample.t) || waited > 2000) beginStroke();
-  } else if (puttState === 'swinging') {
+  if (puttState === 'swinging') {
     strokeSamples.push(sample);
     updateLiveStroke(sample.t);
   }
@@ -204,25 +200,17 @@ function startGyroSensor() {
 function startPutt() {
   // Practice swings are allowed while waiting for your turn
   if ((!isMyTurn && !practiceMode) || puttState !== 'idle') return;
-  puttState = 'address';
+  puttState = 'swinging';
   puttStartTime = performance.now();
-  addressSamples = [];
   strokeSamples = [];
   maxAccel = 0;
   setPowerRing(0);
   puttButton.classList.add('active');
-  puttLabel.textContent = 'HOLD STILL';
-  statusDisplay.textContent = 'Set up at the ball and hold still...';
-  clearTimeout(puttTimeout);
-  puttTimeout = setTimeout(() => finishStroke(), 8000);
-}
-
-function beginStroke() {
-  puttState = 'swinging';
-  strokeSamples = addressSamples.slice(-1);
-  if (navigator.vibrate) navigator.vibrate(25);
   puttLabel.textContent = 'SWING';
   statusDisplay.textContent = practiceMode ? 'Practice swing - nothing is sent' : 'Swing back and through the ball';
+  if (navigator.vibrate) navigator.vibrate(15);
+  clearTimeout(puttTimeout);
+  puttTimeout = setTimeout(() => finishStroke(), 8000);
 }
 
 function updateLiveStroke(now) {
@@ -243,12 +231,7 @@ function updateLiveStroke(now) {
 }
 
 function stopPutt() {
-  if (puttState === 'address') {
-    resetPuttButton();
-    statusDisplay.textContent = 'Keep holding PUTT until it buzzes, then swing';
-  } else if (puttState === 'swinging') {
-    finishStroke();
-  }
+  if (puttState === 'swinging') finishStroke();
 }
 
 function resetPuttButton() {
@@ -354,19 +337,14 @@ function setPowerScale(key) {
 window.addEventListener('DOMContentLoaded', () => {
   if (nameInput) nameInput.value = playerName;
   // Add Listeners
-  if (aimButton) {
-    aimButton.addEventListener('touchstart', (e) => { e.preventDefault(); startAiming(); });
-    aimButton.addEventListener('touchend', (e) => { e.preventDefault(); stopAiming(); });
-    aimButton.addEventListener('mousedown', (e) => { startAiming(); });
-    aimButton.addEventListener('mouseup', (e) => { stopAiming(); });
-  }
+  if (aimButton) bindHold(aimButton, startAiming, stopAiming);
+  if (puttButton) bindHold(puttButton, startPutt, stopPutt);
 
-  if (puttButton) {
-    puttButton.addEventListener('touchstart', (e) => { e.preventDefault(); startPutt(); });
-    puttButton.addEventListener('touchend', (e) => { e.preventDefault(); stopPutt(); });
-    puttButton.addEventListener('mousedown', (e) => { startPutt(); });
-    puttButton.addEventListener('mouseup', (e) => { stopPutt(); });
-  }
+  // Long-press must not select text or open a context menu mid-stroke
+  document.addEventListener('selectstart', (e) => {
+    if (e.target !== nameInput) e.preventDefault();
+  });
+  document.addEventListener('contextmenu', (e) => e.preventDefault());
 
   if (permissionButton) permissionButton.addEventListener('click', requestPermissions);
 
@@ -380,6 +358,24 @@ window.addEventListener('DOMContentLoaded', () => {
     });
   }
 });
+
+// Press-and-hold that survives a long press: touchcancel (iOS callout, gesture) ends the hold too
+function bindHold(el, onStart, onEnd) {
+  let touching = false;
+  el.addEventListener('touchstart', (e) => { e.preventDefault(); touching = true; onStart(); }, { passive: false });
+  const end = (e) => {
+    if (e.cancelable) e.preventDefault();
+    if (!touching) return;
+    touching = false;
+    onEnd();
+  };
+  el.addEventListener('touchend', end, { passive: false });
+  el.addEventListener('touchcancel', end, { passive: false });
+  el.addEventListener('mousedown', (e) => { if (!touching) onStart(); });
+  el.addEventListener('mouseup', (e) => { if (!touching) onEnd(); });
+  el.addEventListener('mouseleave', (e) => { if (!touching && e.buttons) onEnd(); });
+  el.addEventListener('contextmenu', (e) => e.preventDefault());
+}
 
 function joinGame() {
   playerName = (nameInput.value || '').trim().slice(0, 16) || playerName || 'Player';

@@ -3,11 +3,12 @@
 // (x = short edge, y = long edge / putter shaft, z = out of the screen).
 (function (root) {
   const SWING = {
-    fullBackswingDeg: 40, // Backswing that gives full power at neutral tempo
+    fullBackswingDeg: 40, // Backswing that gives full power from its length share
     minBackswingDeg: 3,
     pendulumGain: 5.2, // Natural stroke: peak speed (deg/s) ≈ gain × backswing (deg), ~1.2 s cycle
-    tempoRange: [0.6, 1.4],
-    tempoWeight: 0.5, // Exponent on tempo ratio: accelerating through the ball adds pace
+    // Pace = backswing size and speed through the ball, equally. A natural stroke scores the same on both.
+    lengthWeight: 0.5,
+    speedWeight: 0.5,
     faceSign: 1, // Flip if twisting the phone clockwise sends the ball left
     faceWeight: 0.8, // Share of face angle that becomes start direction (real putts ≈ 0.8)
     maxFaceDeg: 15,
@@ -70,6 +71,11 @@
       return { ok: false, reason: 'Phone was bumped - try a smoother stroke' };
     }
 
+    // Measure from when the stroke starts moving, not from the button press:
+    // any pause before the swing would otherwise accumulate gyro drift
+    const onset = samples.findIndex(s => Math.hypot(s.x, s.z) > SWING.stillRate);
+    if (onset > 3) samples = samples.slice(onset - 3);
+
     // Twist about the long axis is the putter face turning, not the stroke itself
     const strokeSamples = samples.map(s => ({ t: s.t, x: s.x, y: s.y * 0.15, z: s.z }));
     const { axis, confidence } = swingAxis(strokeSamples);
@@ -104,9 +110,11 @@
     const face = Math.max(-SWING.maxFaceDeg, Math.min(SWING.maxFaceDeg, faceAtImpact * SWING.faceSign * SWING.faceWeight));
 
     const lengthPower = backswing / SWING.fullBackswingDeg;
-    const expected = SWING.pendulumGain * backswing;
-    const tempo = Math.max(SWING.tempoRange[0], Math.min(SWING.tempoRange[1], impactSpeed / expected));
-    const power = Math.max(0, Math.min(1, lengthPower * Math.pow(tempo, SWING.tempoWeight) * scale));
+    const speedPower = impactSpeed / (SWING.pendulumGain * SWING.fullBackswingDeg);
+    // Tempo: speed through the ball relative to a natural pendulum of this length (display/logging)
+    const tempo = impactSpeed / (SWING.pendulumGain * backswing);
+    const raw = SWING.lengthWeight * lengthPower + SWING.speedWeight * speedPower;
+    const power = Math.max(0, Math.min(1, raw * scale));
 
     return {
       ok: true,
