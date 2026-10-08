@@ -12,13 +12,8 @@ export class SocketManager {
     // Initialize socket.io connection
     this.socket = io();
     
-    // Set up connection event handlers
+    // Joins the room on every (re)connect
     this.setupConnectionEvents();
-    
-    // Join room
-    if (this.roomId) {
-      this.joinRoom(this.roomId);
-    }
   }
   
   setupConnectionEvents() {
@@ -52,8 +47,8 @@ export class SocketManager {
       this.trigger('orientation', data);
     });
     
-    this.socket.on('throw', (data) => {
-      this.trigger('throw', data);
+    ['throw', 'aim_start', 'aim_end', 'swing_data', 'roster', 'player_joined', 'player_left'].forEach((eventName) => {
+      this.socket.on(eventName, (data) => this.trigger(eventName, data));
     });
   }
   
@@ -61,7 +56,7 @@ export class SocketManager {
     if (!this.socket) return;
     
     console.log('Joining room:', roomId);
-    this.socket.emit('joinRoom', roomId);
+    this.socket.emit('joinRoom', { roomId, role: 'game' });
   }
   
   updateConnectionStatus(text, connected) {
@@ -144,15 +139,15 @@ export class SocketManager {
   }
   
   // Send events to server
-  emitHoleComplete(data) {
+  emitStatus(state, message = '', to = null) {
     if (this.socket) {
-      this.socket.emit('holeComplete', data);
+      this.socket.emit('game_status', { state, message, to });
     }
   }
-  
-  emitGameComplete(data) {
+
+  emitTurn(turn) {
     if (this.socket) {
-      this.socket.emit('gameComplete', data);
+      this.socket.emit('turn', turn);
     }
   }
 }

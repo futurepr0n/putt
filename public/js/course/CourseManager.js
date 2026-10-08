@@ -15,7 +15,8 @@ export class CourseManager {
     this.physicsManager = physicsManager;
 
     this.courseSize = gameConfig.courseSize;
-    this.ball = null;
+    this.balls = new Map(); // playerId -> Ball
+    this.ball = null; // Ball of the player whose shot it is
     this.hole = null;
     this.tee = null;
     this.obstacles = [];
@@ -52,11 +53,7 @@ export class CourseManager {
     // Create safety floors
     this.createSafetyFloors();
 
-    // Create ball at the tee position
-    this.createBall(0, 0.5, -this.courseSize.length / 2 + 3);
-
-    // Set up contact detection
-    this.setupContactDetection();
+    this.setupHoleDetection();
 
     // Add obstacles based on course number
     this.addObstacles(courseNumber);
@@ -89,9 +86,50 @@ export class CourseManager {
     this.tee.create(x, z);
   }
 
-  createBall(x, y, z) {
-    this.ball = new Ball(this.sceneManager, this.physicsManager);
-    this.ball.create(x, y, z);
+  // Ball enters play on the tee when its player first tees off
+  spawnBall(playerId, color) {
+    if (this.balls.has(playerId)) return this.balls.get(playerId);
+    const tee = this.tee.getPosition();
+    const ball = new Ball(this.sceneManager, this.physicsManager, color);
+    ball.create(tee.x, -0.5 + ball.ballRadius + 0.01, tee.z);
+    this.balls.set(playerId, ball);
+    return ball;
+  }
+
+  getBall(playerId) {
+    return this.balls.get(playerId) || null;
+  }
+
+  removeBall(playerId) {
+    const ball = this.balls.get(playerId);
+    if (!ball) return;
+    ball.remove();
+    this.balls.delete(playerId);
+    if (this.ball === ball) this.ball = null;
+  }
+
+  // Active ball is live; every other ball is marked (see-through, no collisions)
+  setActiveBall(playerId) {
+    this.ball = this.balls.get(playerId) || null;
+    for (const [id, ball] of this.balls) ball.setMarked(id !== playerId);
+    this.ballSunk = false;
+    this.prevBallPos = null;
+    this.lippingOut = false;
+  }
+
+  distanceToHole(playerId) {
+    const ball = this.balls.get(playerId);
+    const pos = ball ? ball.getPosition() : this.tee.getPosition();
+    return Math.hypot(pos.x - this.hole.holeCenterX, pos.z - this.hole.holeCenterZ);
+  }
+
+  allBallsAtRest(threshold = 0.05) {
+    for (const ball of this.balls.values()) {
+      if (ball.marked) continue;
+      const v = ball.getVelocity();
+      if (v && Math.hypot(v.x, v.y, v.z) > threshold) return false;
+    }
+    return true;
   }
 
   createBoundaries() {
@@ -202,80 +240,91 @@ export class CourseManager {
     }
   }
 
-  setupContactDetection() {
-    this.physicsManager.addContactDetection((event) => {
-      const bodyA = event.bodyA;
-      const bodyB = event.bodyB;
+  setupHoleDetection() {
+    this.ballSunk = false;
+    this.prevBallPos = null;
+    this.lippingOut = false;
+    this.holeStepListener = () => this.stepHoleDetection();
+    this.physicsManager.world.addEventListener('postStep', this.holeStepListener);
+  }
 
-      // Check for safety floor contacts
-      if ((bodyA === this.ball.ballBody && bodyB.isSafetyFloor) ||
-        (bodyB === this.ball.ballBody && bodyA.isSafetyFloor)) {
+  // Runs every physics sub-step so fast putts can't skip over the cup between checks
+  stepHoleDetection() {
+    if (this.holeInProgress || this.ballSunk || !this.ball || !this.ball.ballBody || !this.hole) return;
 
-        if (this.ball.ballBody.velocity.y < -5) {
-          console.log("Ball hit safety floor with high velocity");
-          this.ball.ballBody.velocity.y = Math.abs(this.ball.ballBody.velocity.y) * 0.5;
+    const body = this.ball.ballBody;
+    const pos = body.position;
+    const prev = this.prevBallPos || { x: pos.x, z: pos.z };
+    this.prevBallPos = { x: pos.x, z: pos.z };
 
-          if (this.ball.ballBody.position.y < -10) {
-            this.resetBallToTee();
-          }
-        }
+    if (pos.y > this.ball.ballRadius + 0.05) return;
+
+    const hx = this.hole.holeCenterX;
+    const hz = this.hole.holeCenterZ;
+    const r = this.hole.holeRadius;
+    const v = body.velocity;
+    const speed = Math.sqrt(v.x * v.x + v.z * v.z);
+
+    // Closest point to the cup centre on the segment travelled this step
+    const sx = pos.x - prev.x;
+    const sz = pos.z - prev.z;
+    const segLenSq = sx * sx + sz * sz;
+    const t = segLenSq > 0 ? Math.max(0, Math.min(1, ((hx - prev.x) * sx + (hz - prev.z) * sz) / segLenSq)) : 1;
+    const cx = prev.x + sx * t;
+    const cz = prev.z + sz * t;
+    const dx = hx - cx;
+    const dz = hz - cz;
+    const distance = Math.sqrt(dx * dx + dz * dz);
+
+    if (distance >= r) this.lippingOut = false;
+
+    if (distance < r) {
+      // Fast balls catch less of the cup, so require a more central line as speed rises
+      const maxSpeed = gameConfig.hole.maxCaptureSpeed;
+      const effectiveRadius = r * Math.max(0, 1 - speed / maxSpeed);
+      if (distance < effectiveRadius || speed < 0.3) {
+        body.position.set(cx, pos.y, cz);
+        this.ballSunk = true;
+        this.lippingOut = false;
+        this.startHoleAnimation();
+        return;
       }
+      // Lip-out once per pass: lose some pace and get nudged off line
+      if (this.lippingOut) return;
+      this.lippingOut = true;
+      const lip = Math.sign(dx * sz - dz * sx) || 1;
+      const scale = 0.75;
+      const angle = lip * 0.25 * (1 - distance / r);
+      const cos = Math.cos(angle), sin = Math.sin(angle);
+      const nvx = (v.x * cos + v.z * sin) * scale;
+      const nvz = (-v.x * sin + v.z * cos) * scale;
+      v.x = nvx;
+      v.z = nvz;
+      return;
+    }
 
-
-    });
+    // Gentle assist for slow balls dying near the cup
+    const assistRange = r * gameConfig.hole.assistRadiusFactor;
+    if (distance < assistRange && speed < gameConfig.hole.assistMaxSpeed) {
+      const pull = 1.5 * (1 - distance / assistRange) * this.physicsManager.world.dt;
+      v.x += (dx / distance) * pull;
+      v.z += (dz / distance) * pull;
+    }
   }
 
   checkBallInHole() {
-    if (this.holeInProgress || !this.ball || !this.hole) return false;
+    return !!this.ballSunk;
+  }
 
-    const ballPos = this.ball.ballBody.position;
-    const holeX = this.hole.holeCenterX;
-    const holeZ = this.hole.holeCenterZ;
+  stopBall() {
+    if (this.ball) this.ball.stop();
+  }
 
-    // Calculate distance from ball to hole center (horizontal only)
-    const dx = ballPos.x - holeX;
-    const dz = ballPos.z - holeZ;
-    const distance = Math.sqrt(dx * dx + dz * dz);
-
-    // Check if ball is closer enough to hole center and moving
-    const velocity = this.ball.ballBody.velocity;
-    const horizontalSpeed = Math.sqrt(velocity.x * velocity.x + velocity.z * velocity.z);
-
-    // Dynamic Magnetism: Stronger suction when close, wider range
-    const magnetismRange = this.hole.holeRadius * 5; // Wide collection area (was 4)
-
-    if (distance < magnetismRange && ballPos.y < 0.3) {
-      // Calculate force direction toward hole
-      const forceFactor = distance < this.hole.holeRadius ? 0.8 : 0.3 * (1 - distance / magnetismRange);
-      // Very strong pull if ON TOP of hole (0.8), gentler further out
-
-      const forceX = -dx * forceFactor;
-      const forceZ = -dz * forceFactor;
-
-      // Apply friction/drag to slow it down for the drop
-      const drag = 1.0 - (0.1 * forceFactor);
-      this.ball.ballBody.velocity.x *= drag;
-      this.ball.ballBody.velocity.z *= drag;
-
-      // Apply the force
-      this.ball.ballBody.applyForce(
-        new CANNON.Vec3(forceX, 0, forceZ),
-        this.ball.ballBody.position
-      );
-    }
-
-    // Ball is in hole if it's closer to the center
-    // MODIFIED: Higher speed threshold allowed (easier to sink fast putts)
-    const captureRadius = this.hole.holeRadius * 0.9; // Must be mostly over hole
-
-    if (distance < captureRadius && horizontalSpeed < 6.0 && ballPos.y < 0.25) {
-      // Speed limit increased to 6.0! (Was 3.5)
-      console.log("Ball in hole! Distance:", distance, "Speed:", horizontalSpeed);
-      this.startHoleAnimation();
-      return true;
-    }
-
-    return false;
+  placeActiveBall(x, z) {
+    if (!this.ball) return;
+    this.ball.setPosition(x, z);
+    this.prevBallPos = null;
+    this.lippingOut = false;
   }
 
   startHoleAnimation() {
@@ -292,57 +341,12 @@ export class CourseManager {
     return this.holeInProgress;
   }
 
-  resetBallToTee() {
-    if (!this.ball || !this.tee) return;
-
-    const teePosition = this.tee.getPosition();
-    this.ball.reset();
-
-    // Update ball position to tee position
-    this.ball.ballBody.position.set(
-      teePosition.x,
-      0.5,
-      teePosition.z
-    );
-  }
-
-  puttBall(velocityData) {
+  puttBall(angle, power) {
     if (!this.ball) return false;
 
-    // Calculate the magnitude of the input velocity
-    const velocityMagnitude = Math.sqrt(
-      velocityData.x * velocityData.x +
-      velocityData.y * velocityData.y +
-      velocityData.z * velocityData.z
-    );
-
-    // Normalize direction
-    const direction = { x: 0, y: 0, z: 1 }; // Default direction (forward)
-    const dirMagnitude = Math.sqrt(
-      velocityData.x * velocityData.x +
-      velocityData.z * velocityData.z
-    );
-
-    if (dirMagnitude > 0) {
-      direction.x = velocityData.x / dirMagnitude;
-      direction.z = velocityData.z / dirMagnitude;
-    }
-
-    // Calculate power
-    const normalizedMagnitude = Math.min(velocityMagnitude / 30, 1);
-    // Apply a power curve: slower at low power, more responsive at mid power
-    const powerCurve = normalizedMagnitude < 0.5 ?
-      normalizedMagnitude * normalizedMagnitude * 2 : // Quadratic for low values
-      normalizedMagnitude; // Linear for higher values
-
-    const forceMagnitude = gameConfig.putt.minForce +
-      powerCurve * (gameConfig.putt.maxForce - gameConfig.putt.minForce);
-
-    // Add power to the velocity data for UI feedback
-    velocityData.power = normalizedMagnitude;
-
-    // Apply putt to ball
-    return this.ball.applyPutt(direction, forceMagnitude);
+    const { minSpeed, maxSpeed, powerExponent } = gameConfig.putt;
+    const speed = minSpeed + (maxSpeed - minSpeed) * Math.pow(power, powerExponent);
+    return this.ball.applyPutt(angle, speed);
   }
 
   getBallPosition() {
@@ -354,19 +358,22 @@ export class CourseManager {
   }
 
   setDebugVisibility(visible) {
-    if (this.ball) {
-      this.ball.setDebugVisibility(visible);
-    }
+    for (const ball of this.balls.values()) ball.setDebugVisibility(visible);
   }
 
   clearCourse() {
     // Remove all objects from the scene and physics world
-
-    // Remove ball
-    if (this.ball) {
-      this.ball.remove();
-      this.ball = null;
+    if (this.holeStepListener) {
+      this.physicsManager.world.removeEventListener('postStep', this.holeStepListener);
+      this.holeStepListener = null;
     }
+    this.ballSunk = false;
+    this.prevBallPos = null;
+    this.lippingOut = false;
+
+    for (const ball of this.balls.values()) ball.remove();
+    this.balls.clear();
+    this.ball = null;
 
     // Remove hole
     if (this.hole) {

@@ -4,6 +4,11 @@ export class DirectionIndicator {
   constructor(sceneManager) {
     this.sceneManager = sceneManager;
     this.arrow = null;
+    this.aimColor = 0xffffff;
+  }
+
+  setAimColor(color) {
+    this.aimColor = color;
   }
 
   create() {
@@ -109,8 +114,8 @@ export class DirectionIndicator {
     this.arrow.visible = true;
 
     // Update visuals based on mode
-    const opacity = isSwingFeedback ? 1.0 : 0.6;
-    const color = isSwingFeedback ? 0x00ff00 : 0xffffff; // Green for swing, White for aim
+    const opacity = isSwingFeedback ? 1.0 : 0.75;
+    const color = isSwingFeedback ? 0x00ff00 : this.aimColor; // Green for swing, player's color for aim
 
     this.updateMaterial(color, opacity);
   }

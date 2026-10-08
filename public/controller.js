@@ -11,11 +11,33 @@ const permissionButton = document.getElementById('permissionButton');
 const permissionSection = document.getElementById('permissionSection');
 const controlsSection = document.getElementById('controlsSection'); // Container for controls
 const debugInfo = document.getElementById('debugInfo');
+const turnBanner = document.getElementById('turnBanner');
+const playerBadge = document.getElementById('playerBadge');
+const nameInput = document.getElementById('nameInput');
 
 // Global State
 let motionPermissionGranted = false;
-let currentOrientation = { alpha: 0, beta: 0, gamma: 0, absolute: 0, heading: 0 };
+let currentOrientation = { alpha: 0, beta: 0, gamma: 0 };
 let socket = io();
+
+// Player identity: a stable id per phone so reconnecting keeps your ball and score
+function storageGet(key) {
+  try { return localStorage.getItem(key); } catch (e) { return null; }
+}
+function storageSet(key, value) {
+  try { localStorage.setItem(key, value); } catch (e) { /* private mode */ }
+}
+function makeClientId() {
+  const bytes = new Uint8Array(12);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
+const clientId = storageGet('putt.clientId') || makeClientId();
+storageSet('putt.clientId', clientId);
+let playerName = storageGet('putt.name') || '';
+let myPlayerId = null;
+let hasJoined = false;
+let isMyTurn = false;
 
 // Aiming State
 let isAiming = false;
@@ -27,9 +49,15 @@ let isPutting = false;
 let puttStartTime = 0;
 let puttStartOrientation = null; // Snapshot of orientation when putt button pressed
 let orientationHistory = [];
+let motionHistory = []; // Gyro rotation rates (deg/s) during the swing, when available
 
 
 // --- 1. Orientation Handling ---
+
+// Sensor timestamp so sample spacing reflects when readings were taken, not when JS ran
+function sampleTime(event) {
+  return event && event.timeStamp > 0 ? event.timeStamp : performance.now();
+}
 
 function handleOrientation(event) {
   // Store raw values
@@ -37,57 +65,57 @@ function handleOrientation(event) {
   if (event.beta !== null) currentOrientation.beta = event.beta;
   if (event.gamma !== null) currentOrientation.gamma = event.gamma;
 
-  // High-precision sources
-  if (event.webkitCompassHeading) currentOrientation.heading = event.webkitCompassHeading;
-  if (event.absolute === true && event.alpha !== null) currentOrientation.absolute = event.alpha;
-
-  // Debug spew for verifying sensors
-  // debug(`A:${currentOrientation.alpha?.toFixed(0)} B:${currentOrientation.beta?.toFixed(0)} G:${currentOrientation.gamma?.toFixed(0)}`);
-
-  if (isPutting && isPutting === true) {
+  if (isPutting) {
     // Record high-freq history for swing analysis
     orientationHistory.push({
       beta: currentOrientation.beta,
       gamma: currentOrientation.gamma,
       alpha: currentOrientation.alpha,
-      time: Date.now()
+      time: sampleTime(event)
     });
   }
 }
 
-// Get the best available compass heading (0-360, 0=North typically, or relative start)
-function getCompassHeading() {
-  if (currentOrientation.heading !== undefined) return currentOrientation.heading;
-  if (currentOrientation.absolute !== undefined) return currentOrientation.absolute;
-  return currentOrientation.alpha || 0;
+function handleMotion(event) {
+  const rate = event.rotationRate;
+  if (!isPutting || !rate || rate.beta === null || rate.gamma === null) return;
+  motionHistory.push({ beta: rate.beta, gamma: rate.gamma, time: sampleTime(event) });
+}
+
+// Turn of the phone since aiming began, in degrees (-180..180, positive = turned left)
+let aimBaseAlpha = 0;
+
+function wrapDegrees(deg) {
+  return ((deg + 540) % 360) - 180;
+}
+
+function getAimDelta() {
+  return wrapDegrees(currentOrientation.alpha - aimBaseAlpha);
+}
+
+function emitAimDelta(deltaDeg) {
+  const rad = deltaDeg * (Math.PI / 180);
+  socket.emit('orientation', { x: Math.sin(rad), y: 0, z: Math.cos(rad) });
 }
 
 
 // --- 2. Aiming Logic ---
 
 function startAiming() {
-  if (isAiming) return;
+  if (isAiming || !isMyTurn) return;
   isAiming = true;
+  aimBaseAlpha = currentOrientation.alpha;
   aimButton.style.backgroundColor = '#1976D2'; // Darker Blue
   aimButton.textContent = "Aiming...";
 
-  // Notify server we started aiming (for Snap-to-Pin)
+  // Game anchors the arrow's current direction to this phone pose
   socket.emit('aim_start');
 
-  // Start streaming aiming updates
   if (aimInterval) clearInterval(aimInterval);
   aimInterval = setInterval(() => {
-    const heading = getCompassHeading();
-    // Send 'preview' direction to game so arrow rotates
-    const angleRad = heading * (Math.PI / 180);
-    const direction = {
-      x: Math.sin(angleRad),
-      y: 0,
-      z: Math.cos(angleRad)
-    };
-    socket.emit('orientation', direction);
-
-    statusDisplay.innerHTML = `Aiming...<br>Angle: ${heading.toFixed(0)}°<br>(Point phone at screen)`;
+    const delta = getAimDelta();
+    emitAimDelta(delta);
+    statusDisplay.innerHTML = `Aiming...<br>Turn: ${delta.toFixed(0)}°<br>(Rotate phone to adjust)`;
   }, 50);
 }
 
@@ -96,23 +124,14 @@ function stopAiming() {
   isAiming = false;
   clearInterval(aimInterval);
 
-  // Lock the angle
-  lockedAngle = getCompassHeading();
+  lockedAngle = getAimDelta();
 
   aimButton.style.backgroundColor = '#2196F3'; // Original Blue
   aimButton.textContent = `Set! (${lockedAngle.toFixed(0)}°)`;
   statusDisplay.textContent = "Angle Locked. Hold Green to Putt.";
 
+  emitAimDelta(lockedAngle);
   socket.emit('aim_end');
-
-  // Send final locked orientation
-  const angleRad = lockedAngle * (Math.PI / 180);
-  const direction = {
-    x: Math.sin(angleRad),
-    y: 0,
-    z: Math.cos(angleRad)
-  };
-  socket.emit('orientation', direction);
 }
 
 
@@ -121,9 +140,11 @@ function stopAiming() {
 let swingInterval = null;
 
 function startPutt() {
+  if (!isMyTurn) return;
   isPutting = true;
   puttStartTime = Date.now();
   orientationHistory = [];
+  motionHistory = [];
 
   // Capture the 'Zero' stance
   puttStartOrientation = { ...currentOrientation };
@@ -316,6 +337,10 @@ function analyzeSwingAndSend(duration) {
     }
   }
 
+  // Prefer the gyro: peak forward-swing rotation rate around impact (after the apex)
+  const gyroSpeed = gyroImpactSpeed(axis, orientationHistory[apexIndex].time, orientationHistory[impactIndex].time);
+  if (gyroSpeed !== null) impactSpeed = gyroSpeed;
+
   // 5. Calculate Deviation (Slice/Hook) AT Impact
   // Compare Alpha at Impact vs Start
   const impactAlpha = orientationHistory[impactIndex].alpha;
@@ -329,17 +354,14 @@ function analyzeSwingAndSend(duration) {
   // Golf putt: max speed around 300-400 dps is hard.
   const normalizedPower = Math.min(impactSpeed / 400, 1.5);
 
-  // Construct Vector
-  const finalAngle = lockedAngle + deviation;
-  const finalRad = finalAngle * (Math.PI / 180);
-
-  const baseSpeed = 15 * normalizedPower;
-
+  // Direction is owned by the game's aim arrow; send power plus swing deviation
+  const finalRad = (lockedAngle + deviation) * (Math.PI / 180);
   const velocity = {
-    x: Math.sin(finalRad) * baseSpeed,
-    y: 0.1,
-    z: Math.cos(finalRad) * baseSpeed,
-    power: normalizedPower
+    x: Math.sin(finalRad) * normalizedPower,
+    y: 0,
+    z: Math.cos(finalRad) * normalizedPower,
+    power: Math.min(normalizedPower, 1),
+    deviation
   };
 
   debug(`Swing Valid. Axis:${axis} Apex:${maxDeviation.toFixed(0)} Speed:${impactSpeed.toFixed(0)} Dev:${deviation.toFixed(1)}`);
@@ -353,9 +375,18 @@ function analyzeSwingAndSend(duration) {
 }
 
 
+function gyroImpactSpeed(axis, apexTime, impactTime) {
+  const windowMs = 80;
+  const samples = motionHistory.filter(m => m.time > apexTime && Math.abs(m.time - impactTime) <= windowMs);
+  if (samples.length < 2) return null;
+  return Math.max(...samples.map(m => Math.abs(m[axis])));
+}
+
+
 // --- 4. Setup & Permissions ---
 
 window.addEventListener('DOMContentLoaded', () => {
+  if (nameInput) nameInput.value = playerName;
   // Add Listeners
   if (aimButton) {
     aimButton.addEventListener('touchstart', (e) => { e.preventDefault(); startAiming(); });
@@ -374,14 +405,27 @@ window.addEventListener('DOMContentLoaded', () => {
   if (permissionButton) permissionButton.addEventListener('click', requestPermissions);
 });
 
+function joinGame() {
+  playerName = (nameInput.value || '').trim().slice(0, 16) || playerName || 'Player';
+  storageSet('putt.name', playerName);
+  hasJoined = true;
+  if (socket.connected && roomId) {
+    socket.emit('joinRoom', { roomId, role: 'controller', clientId, name: playerName });
+  }
+}
+
 function requestPermissions() {
   if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-    DeviceOrientationEvent.requestPermission()
-      .then(state => {
-        if (state === 'granted') {
+    // Both requests must start inside the same tap gesture on iOS
+    const motionRequest = typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function'
+      ? DeviceMotionEvent.requestPermission().catch(() => 'denied')
+      : Promise.resolve('granted');
+    Promise.all([DeviceOrientationEvent.requestPermission(), motionRequest])
+      .then(([orientationState]) => {
+        if (orientationState === 'granted') {
           enableControls();
         } else {
-          alert('Permission denied');
+          statusDisplay.textContent = 'Motion permission denied. Enable it in Settings and reload.';
         }
       })
       .catch(console.error);
@@ -395,12 +439,13 @@ function enableControls() {
   motionPermissionGranted = true;
   permissionSection.style.display = 'none';
   controlsSection.style.display = 'flex'; // Show buttons
-  statusDisplay.textContent = "Ready. Set Angle then Putt.";
+  statusDisplay.textContent = "Joined! Wait for your turn.";
+  joinGame();
 
-  window.addEventListener('deviceorientation', handleOrientation, true);
-  if ('ondeviceorientationabsolute' in window) {
-    window.addEventListener('deviceorientationabsolute', handleOrientation, true);
-  }
+  // Use a single source: mixing relative and absolute alpha makes the aim jump
+  const eventName = 'ondeviceorientationabsolute' in window ? 'deviceorientationabsolute' : 'deviceorientation';
+  window.addEventListener(eventName, handleOrientation, true);
+  window.addEventListener('devicemotion', handleMotion, true);
 }
 
 // --- 5. Utilities ---
@@ -414,10 +459,81 @@ function debug(msg) {
 socket.on('connect', () => {
   connectionStatus.textContent = 'Connected';
   connectionStatus.className = 'connected';
-  if (roomId) socket.emit('joinRoom', roomId);
+  if (hasJoined) joinGame();
+  else turnBanner.textContent = 'Enter your name to join';
+});
+
+socket.on('disconnect', () => {
+  connectionStatus.textContent = 'Reconnecting...';
+  connectionStatus.className = 'disconnected';
+  setMyTurn(false);
+  turnBanner.textContent = 'Reconnecting...';
 });
 
 socket.on('roomJoined', (data) => {
   roomId = data.roomId;
-  connectionStatus.textContent = `Room: ${roomId}`;
+  myPlayerId = data.playerId;
+  connectionStatus.textContent = `Room: ${roomId} · ${playerName}`;
+});
+
+socket.on('roomError', (data) => {
+  setMyTurn(false);
+  turnBanner.textContent = data.message;
+});
+
+// Cancel any half-finished aim or swing without sending it
+function cancelInput() {
+  if (isAiming) {
+    isAiming = false;
+    clearInterval(aimInterval);
+    aimButton.style.backgroundColor = '#2196F3';
+    aimButton.textContent = 'HOLD TO SET ANGLE';
+  }
+  if (isPutting) {
+    isPutting = false;
+    clearInterval(swingInterval);
+    puttButton.style.backgroundColor = '#4CAF50';
+    puttButton.textContent = 'HOLD TO PUTT';
+  }
+}
+
+function setMyTurn(mine) {
+  if (!mine && isMyTurn) cancelInput();
+  isMyTurn = mine;
+  controlsSection.classList.toggle('locked', !mine);
+  turnBanner.classList.toggle('my-turn', mine);
+}
+
+socket.on('turn', (turn) => {
+  if (!turn || !myPlayerId) return;
+  const me = Array.isArray(turn.players) ? turn.players.find(p => p.playerId === myPlayerId) : null;
+  if (me) playerBadge.style.backgroundColor = me.color;
+
+  const mine = turn.playerId === myPlayerId && turn.phase === 'aiming';
+  const wasMine = isMyTurn;
+  setMyTurn(mine);
+
+  if (mine) {
+    turnBanner.textContent = `YOUR TURN · Hole ${turn.hole} · Stroke ${me ? me.strokes + 1 : ''}`;
+    if (!wasMine && navigator.vibrate) navigator.vibrate([60, 40, 60]);
+  } else if (turn.phase === 'game_over') {
+    turnBanner.textContent = 'Round complete!';
+  } else if (turn.phase === 'between_holes') {
+    turnBanner.textContent = `Hole ${turn.hole} complete`;
+  } else if (turn.playerId) {
+    turnBanner.textContent = `${turn.name} is up · Hole ${turn.hole}`;
+  } else if (me && (me.holed || me.pickedUp)) {
+    turnBanner.textContent = 'Done this hole · waiting for others';
+  } else {
+    turnBanner.textContent = 'Waiting for players...';
+  }
+});
+
+const statusVibration = { putt_accepted: 40, putt_rejected: [30, 60, 30], not_your_turn: [30, 60, 30], holed: [80, 60, 160] };
+
+socket.on('game_status', (data) => {
+  if (isPutting || isAiming) return;
+  statusDisplay.textContent = data.message;
+  const pattern = statusVibration[data.state];
+  if (pattern && navigator.vibrate) navigator.vibrate(pattern);
 });

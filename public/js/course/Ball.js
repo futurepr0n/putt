@@ -1,10 +1,13 @@
 const THREE = window.THREE;
 const CANNON = window.CANNON;
+import { gameConfig } from '../config/gameConfig.js';
 
 export class Ball {
-  constructor(sceneManager, physicsManager) {
+  constructor(sceneManager, physicsManager, color = 0xFFFFFF) {
     this.sceneManager = sceneManager;
     this.physicsManager = physicsManager;
+    this.color = color;
+    this.marked = false;
     
     this.ballRadius = 0.08;
     this.ballMesh = null;
@@ -35,9 +38,10 @@ export class Ball {
     
     // Ball material with highlight for visibility
     const ballMaterial = new THREE.MeshStandardMaterial({ 
-      color: 0xFFFFFF,
-      emissive: 0xAAAAAA,
-      emissiveIntensity: 0.2,
+      color: this.color,
+      emissive: this.color,
+      emissiveIntensity: 0.15,
+      transparent: true,
       roughness: 0.3,
       metalness: 0.2
     });
@@ -76,7 +80,7 @@ export class Ball {
     // Physics body with improved parameters
     this.ballBody = new CANNON.Body({ 
       mass: 0.15,
-      linearDamping: 0.2,
+      linearDamping: 0.02,
       angularDamping: 0.3,
       allowSleep: true,
       sleepSpeedLimit: 0.05,
@@ -92,8 +96,63 @@ export class Ball {
     
     // Add to physics world
     this.physicsManager.addBody(this.ballBody, this.ballMesh);
-    
+
+    this.rollingResistance = () => this.applyRollingResistance();
+    this.physicsManager.world.addEventListener('postStep', this.rollingResistance);
+
     return this.ballBody;
+  }
+
+  applyRollingResistance() {
+    const body = this.ballBody;
+    if (!body || body.type !== CANNON.Body.DYNAMIC) return;
+    // Only while in contact with the surface
+    if (body.position.y > this.ballRadius + 0.02) return;
+
+    const v = body.velocity;
+    const speed = Math.sqrt(v.x * v.x + v.z * v.z);
+    if (speed === 0) return;
+
+    const newSpeed = speed - gameConfig.green.rollingDecel * this.physicsManager.world.dt;
+    if (newSpeed <= gameConfig.green.stopSpeed) {
+      this.stop();
+      return;
+    }
+    const scale = newSpeed / speed;
+    v.x *= scale;
+    v.z *= scale;
+    body.angularVelocity.scale(scale, body.angularVelocity);
+  }
+
+  // Marked ball (golf etiquette while another player putts): see-through and can't be hit
+  setMarked(marked) {
+    if (!this.ballBody || this.marked === marked) return;
+    this.marked = marked;
+    const body = this.ballBody;
+    body.velocity.set(0, 0, 0);
+    body.angularVelocity.set(0, 0, 0);
+    body.collisionResponse = !marked;
+    body.type = marked ? CANNON.Body.KINEMATIC : CANNON.Body.DYNAMIC;
+    if (!marked) {
+      // Settle back onto the surface in case the lie drifted
+      body.position.y = Math.max(body.position.y, this.ballRadius);
+      body.wakeUp();
+    }
+    if (this.ballMesh) this.ballMesh.material.opacity = marked ? 0.35 : 1;
+  }
+
+  setPosition(x, z) {
+    if (!this.ballBody) return;
+    this.ballBody.position.set(x, this.ballRadius + 0.01, z);
+    this.ballBody.velocity.set(0, 0, 0);
+    this.ballBody.angularVelocity.set(0, 0, 0);
+    if (this.ballMesh) this.ballMesh.scale.set(1, 1, 1);
+  }
+
+  stop() {
+    if (!this.ballBody) return;
+    this.ballBody.velocity.set(0, this.ballBody.velocity.y, 0);
+    this.ballBody.angularVelocity.set(0, 0, 0);
   }
   
   createDebugSphere() {
@@ -128,26 +187,17 @@ export class Ball {
     }
   }
   
-  applyPutt(direction, power) {
+  applyPutt(angle, speed) {
     if (!this.ballBody) return false;
-    
-    // Clear any existing velocity
-    this.ballBody.velocity.set(0, 0, 0);
-    this.ballBody.angularVelocity.set(0, 0, 0);
-    
-    // Make sure the ball is awake
+
     this.ballBody.wakeUp();
-    
-    // Create velocity vector
-    const velocity = new CANNON.Vec3(
-      direction.x * power,
-      0.05, // Small upward component
-      direction.z * power
-    );
-    
-    // Apply impulse at the center of the ball
-    this.ballBody.applyImpulse(velocity, this.ballBody.position);
-    
+
+    const vx = Math.sin(angle) * speed;
+    const vz = Math.cos(angle) * speed;
+    this.ballBody.velocity.set(vx, 0, vz);
+    // Start in a pure roll (ω = up × v / r) so friction doesn't skid the ball
+    this.ballBody.angularVelocity.set(vz / this.ballRadius, 0, -vx / this.ballRadius);
+
     return true;
   }
   
@@ -185,6 +235,11 @@ export class Ball {
       this.debugSphere = null;
     }
     
+    if (this.rollingResistance) {
+      this.physicsManager.world.removeEventListener('postStep', this.rollingResistance);
+      this.rollingResistance = null;
+    }
+
     if (this.ballBody) {
       this.physicsManager.removeBody(this.ballBody);
       this.ballBody = null;
