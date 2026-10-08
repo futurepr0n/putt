@@ -94,13 +94,17 @@ export class CameraControls {
       { name: 'Follow View', position: [0, 5, -8], target: [0, 0, 4] },
     ];
     
+    // Bottom-right row, clear of the scoreboard (which grows with each player)
     const container = DomUtils.createElement('div', {
       position: 'absolute',
-      top: '80px',
-      right: '20px',
+      bottom: '56px',
+      right: '10px',
       display: 'flex',
-      flexDirection: 'column',
-      gap: '10px'
+      flexDirection: 'row',
+      gap: '8px',
+      zIndex: '100',
+      border: 'none',
+      backdropFilter: 'none'
     });
     
     presetPositions.forEach(preset => {
