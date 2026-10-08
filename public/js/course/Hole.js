@@ -97,25 +97,25 @@ export class Hole {
     const t = time / 1000;
     for (let i = 0; i < pos.count; i++) {
       const x = base[i * 3];
-      const along = x + 0.15; // 0 at the pole, 0.3 at the free end
-      pos.setZ(i, Math.sin(along * 18 - t * 5) * 0.03 * (along / 0.3));
+      const along = x + 0.2; // 0 at the pole, 0.4 at the free end
+      pos.setZ(i, Math.sin(along * 14 - t * 5) * 0.035 * (along / 0.4));
     }
     pos.needsUpdate = true;
   }
 
   createFlag(x, z) {
     // Create flag pole
-    const poleGeometry = new THREE.CylinderGeometry(0.01, 0.01, 1, 8);
+    const poleGeometry = new THREE.CylinderGeometry(0.012, 0.012, 1.2, 8);
     this.poleMesh = new THREE.Mesh(poleGeometry, this.materials.pole);
-    this.poleMesh.position.set(x, 0.5, z);
+    this.poleMesh.position.set(x, 0.6, z);
     this.poleMesh.castShadow = true;
     this.sceneManager.add(this.poleMesh);
 
     // Create flag
-    const flagGeometry = new THREE.PlaneGeometry(0.3, 0.2, 12, 1);
+    const flagGeometry = new THREE.PlaneGeometry(0.4, 0.26, 12, 1);
     this.flagBase = Float32Array.from(flagGeometry.attributes.position.array);
     this.flagMesh = new THREE.Mesh(flagGeometry, this.materials.flag);
-    this.flagMesh.position.set(x + 0.15, 0.8, z);
+    this.flagMesh.position.set(x + 0.2, 1.05, z);
     this.flagMesh.castShadow = true;
     this.sceneManager.add(this.flagMesh);
   }

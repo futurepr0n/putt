@@ -346,6 +346,7 @@ export class CourseManager {
 
   update(time) {
     if (this.hole) this.hole.update(time);
+    for (const ball of this.balls.values()) ball.syncContactShadow();
   }
 
   puttBall(angle, power) {
