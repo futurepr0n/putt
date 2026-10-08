@@ -99,6 +99,7 @@ export class Game {
   handlePutt(velocityData) {
     if (this.ballInMotion || this.courseCompleted) {
       this.uiManager.showMessage('Wait for the ball to stop moving!');
+      this.notifyController('putt_rejected', this.courseCompleted ? 'Hole finished - next hole loading' : 'Ball still moving - wait');
       return;
     }
 
@@ -114,6 +115,7 @@ export class Game {
       this.strokeCount++;
       this.uiManager.updateStrokeDisplay(this.strokeCount);
       this.uiManager.showMessage(`Putt power: ${Math.round(power * 100)}%`);
+      this.notifyController('putt_accepted', `Stroke ${this.strokeCount} - ${Math.round(power * 100)}% power`);
     }
   }
 
@@ -122,6 +124,11 @@ export class Game {
     this.courseManager.resetBallToTee();
     this.aimAtHole();
     this.uiManager.showMessage('Ball reset. Ready for next shot');
+    this.notifyController('ready', 'Ball reset - ready');
+  }
+
+  notifyController(state, message) {
+    if (this.socketManager) this.socketManager.emitStatus(state, message);
   }
 
   getAngleToHole() {
@@ -175,6 +182,7 @@ export class Game {
       this.courseManager.stopBall();
       this.aimAtHole();
       this.uiManager.showMessage('Ready for next shot');
+      this.notifyController('ready', `Ready for stroke ${this.strokeCount + 1}`);
     }
   }
 
@@ -192,8 +200,8 @@ export class Game {
 
     // Add to total score
     this.totalScore += this.strokeCount;
+    this.notifyController('hole_complete', `In the hole! ${this.strokeCount} strokes (par ${this.par})`);
 
-    // Move to next course after a delay
     // Move to next course after a delay
     setTimeout(() => {
       this.currentCourse++;
@@ -214,8 +222,10 @@ export class Game {
         this.uiManager.updateStrokeDisplay(this.strokeCount);
         this.aimAtHole();
         this.uiManager.showMessage('Ready for Hole ' + (this.currentCourse + 1));
+        this.notifyController('ready', `Hole ${this.currentCourse + 1} - par ${this.par}`);
       } else {
         this.uiManager.showGameComplete(this.totalScore);
+        this.notifyController('game_complete', `Round complete - ${this.totalScore} strokes`);
       }
     }, 3000);
   }

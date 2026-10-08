@@ -27,9 +27,15 @@ let isPutting = false;
 let puttStartTime = 0;
 let puttStartOrientation = null; // Snapshot of orientation when putt button pressed
 let orientationHistory = [];
+let motionHistory = []; // Gyro rotation rates (deg/s) during the swing, when available
 
 
 // --- 1. Orientation Handling ---
+
+// Sensor timestamp so sample spacing reflects when readings were taken, not when JS ran
+function sampleTime(event) {
+  return event && event.timeStamp > 0 ? event.timeStamp : performance.now();
+}
 
 function handleOrientation(event) {
   // Store raw values
@@ -43,9 +49,15 @@ function handleOrientation(event) {
       beta: currentOrientation.beta,
       gamma: currentOrientation.gamma,
       alpha: currentOrientation.alpha,
-      time: Date.now()
+      time: sampleTime(event)
     });
   }
+}
+
+function handleMotion(event) {
+  const rate = event.rotationRate;
+  if (!isPutting || !rate || rate.beta === null || rate.gamma === null) return;
+  motionHistory.push({ beta: rate.beta, gamma: rate.gamma, time: sampleTime(event) });
 }
 
 // Turn of the phone since aiming began, in degrees (-180..180, positive = turned left)
@@ -109,6 +121,7 @@ function startPutt() {
   isPutting = true;
   puttStartTime = Date.now();
   orientationHistory = [];
+  motionHistory = [];
 
   // Capture the 'Zero' stance
   puttStartOrientation = { ...currentOrientation };
@@ -301,6 +314,10 @@ function analyzeSwingAndSend(duration) {
     }
   }
 
+  // Prefer the gyro: peak forward-swing rotation rate around impact (after the apex)
+  const gyroSpeed = gyroImpactSpeed(axis, orientationHistory[apexIndex].time, orientationHistory[impactIndex].time);
+  if (gyroSpeed !== null) impactSpeed = gyroSpeed;
+
   // 5. Calculate Deviation (Slice/Hook) AT Impact
   // Compare Alpha at Impact vs Start
   const impactAlpha = orientationHistory[impactIndex].alpha;
@@ -335,6 +352,14 @@ function analyzeSwingAndSend(duration) {
 }
 
 
+function gyroImpactSpeed(axis, apexTime, impactTime) {
+  const windowMs = 80;
+  const samples = motionHistory.filter(m => m.time > apexTime && Math.abs(m.time - impactTime) <= windowMs);
+  if (samples.length < 2) return null;
+  return Math.max(...samples.map(m => Math.abs(m[axis])));
+}
+
+
 // --- 4. Setup & Permissions ---
 
 window.addEventListener('DOMContentLoaded', () => {
@@ -358,12 +383,16 @@ window.addEventListener('DOMContentLoaded', () => {
 
 function requestPermissions() {
   if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
-    DeviceOrientationEvent.requestPermission()
-      .then(state => {
-        if (state === 'granted') {
+    // Both requests must start inside the same tap gesture on iOS
+    const motionRequest = typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function'
+      ? DeviceMotionEvent.requestPermission().catch(() => 'denied')
+      : Promise.resolve('granted');
+    Promise.all([DeviceOrientationEvent.requestPermission(), motionRequest])
+      .then(([orientationState]) => {
+        if (orientationState === 'granted') {
           enableControls();
         } else {
-          alert('Permission denied');
+          statusDisplay.textContent = 'Motion permission denied. Enable it in Settings and reload.';
         }
       })
       .catch(console.error);
@@ -382,6 +411,7 @@ function enableControls() {
   // Use a single source: mixing relative and absolute alpha makes the aim jump
   const eventName = 'ondeviceorientationabsolute' in window ? 'deviceorientationabsolute' : 'deviceorientation';
   window.addEventListener(eventName, handleOrientation, true);
+  window.addEventListener('devicemotion', handleMotion, true);
 }
 
 // --- 5. Utilities ---
@@ -401,4 +431,13 @@ socket.on('connect', () => {
 socket.on('roomJoined', (data) => {
   roomId = data.roomId;
   connectionStatus.textContent = `Room: ${roomId}`;
+});
+
+const statusVibration = { putt_accepted: 40, putt_rejected: [30, 60, 30], hole_complete: [80, 60, 160] };
+
+socket.on('game_status', (data) => {
+  if (isPutting || isAiming) return;
+  statusDisplay.textContent = data.message;
+  const pattern = statusVibration[data.state];
+  if (pattern && navigator.vibrate) navigator.vibrate(pattern);
 });

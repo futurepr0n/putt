@@ -44,6 +44,11 @@ export const gameConfig = {
     stopSpeed: 0.04
   },
 
+  // Extra deceleration while in a sand trap (m/s^2)
+  sand: {
+    decel: 4.0
+  },
+
   // Hole settings
   hole: {
     radius: 0.1875, // Increased by 1.25x for easier putting

@@ -14,7 +14,6 @@ export class UIManager {
 
     this.messageElement = null;
     this.lastDirectionData = null;
-    this.followBallMode = false;
   }
 
   init() {
@@ -182,14 +181,9 @@ export class UIManager {
     });
   }
 
-  toggleFollowBallMode() {
-    this.followBallMode = !this.followBallMode;
-    return this.followBallMode;
-  }
-
   update() {
     // Update camera to follow ball if mode is enabled
-    if (this.followBallMode) {
+    if (this.cameraControls && this.cameraControls.followBallMode) {
       const ballPosition = this.game.courseManager.getBallPosition();
       if (ballPosition) {
         this.sceneManager.setFollowMode(ballPosition, true);

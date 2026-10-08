@@ -60,15 +60,6 @@ export class Hill {
 
     this.physicsManager.addBody(this.hillBody);
 
-    // Create contact material that allows smoother rolling over the hill
-    const ballMaterial = new CANNON.Material('ballMaterial');
-    this.physicsManager.createContactMaterial(ballMaterial, hillMaterial, {
-      friction: 0.1,        // Very low friction for smooth rolling
-      restitution: 0.1,     // Low bounce
-      contactEquationStiffness: 1e7,
-      contactEquationRelaxation: 4
-    });
-
     return {
       type: 'hill',
       position: { x, z },

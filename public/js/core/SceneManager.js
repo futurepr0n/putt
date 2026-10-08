@@ -53,32 +53,35 @@ export class SceneManager {
   }
   
   setupControls() {
-    // This would import and setup OrbitControls
-    // For this example, we're assuming the script is loaded externally
-    const script = document.createElement('script');
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/examples/js/controls/OrbitControls.js';
-    
-    script.onload = () => {
-      this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
-      this.controls.enableDamping = true;
-      this.controls.dampingFactor = 0.2;
-      this.controls.screenSpacePanning = false;
-      this.controls.maxPolarAngle = Math.PI / 1.8;
-      this.controls.minDistance = 2;
-      this.controls.maxDistance = 30;
-      this.controls.target.set(0, 0, 0);
-      this.controls.update();
-    };
-    
-    document.head.appendChild(script);
+    // OrbitControls is loaded by game.html before this module runs
+    if (!THREE.OrbitControls) {
+      console.warn('OrbitControls not loaded; camera controls disabled');
+      return;
+    }
+    this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
+    this.controls.enableDamping = true;
+    this.controls.dampingFactor = 0.2;
+    this.controls.screenSpacePanning = false;
+    this.controls.maxPolarAngle = Math.PI / 1.8;
+    this.controls.minDistance = 2;
+    this.controls.maxDistance = 30;
+    this.controls.target.set(0, 0, 0);
+    this.controls.update();
   }
   
   add(object) {
     this.scene.add(object);
   }
   
+  // Removes and frees GPU resources; shared materials re-upload automatically if reused
   remove(object) {
+    if (!object) return;
     this.scene.remove(object);
+    object.traverse((child) => {
+      if (child.geometry) child.geometry.dispose();
+      const materials = Array.isArray(child.material) ? child.material : [child.material];
+      materials.forEach((m) => m && m.dispose());
+    });
   }
   
   clear() {

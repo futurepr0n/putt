@@ -144,6 +144,12 @@ export class SocketManager {
   }
   
   // Send events to server
+  emitStatus(state, message = '') {
+    if (this.socket) {
+      this.socket.emit('game_status', { state, message });
+    }
+  }
+
   emitHoleComplete(data) {
     if (this.socket) {
       this.socket.emit('holeComplete', data);

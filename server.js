@@ -158,7 +158,7 @@ io.on('connection', (socket) => {
       
       // Forward the orientation data to all clients in the room
       // Use socket.to() to only send to others (not back to sender)
-      io.to(currentRoom).emit('orientation', data);
+      socket.to(currentRoom).emit('orientation', data);
     }
   });
 
@@ -178,6 +178,15 @@ io.on('connection', (socket) => {
     const power = Number(data.power);
     if (!Number.isFinite(deviation) || !Number.isFinite(power)) return;
     socket.to(currentRoom).emit('swing_data', { deviation, power });
+  });
+
+  // Game -> controller feedback (putt accepted/rejected, ball ready, hole complete)
+  socket.on('game_status', (data) => {
+    if (!currentRoom || !data || typeof data.state !== 'string') return;
+    socket.to(currentRoom).emit('game_status', {
+      state: data.state.slice(0, 32),
+      message: typeof data.message === 'string' ? data.message.slice(0, 120) : ''
+    });
   });
 
   // When the controller sends a putt (still using 'throw' event for compatibility)
@@ -202,7 +211,7 @@ io.on('connection', (socket) => {
         !isNaN(data.x) && !isNaN(data.y) && !isNaN(data.z)) {
       
       // Send the putt data only to clients in this room
-      io.to(currentRoom).emit('throw', data);
+      socket.to(currentRoom).emit('throw', data);
     } else {
       console.error('Invalid putt data received:', data);
     }
