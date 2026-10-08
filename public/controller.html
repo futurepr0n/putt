@@ -3,197 +3,258 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#173d22">
   <title>Mini Golf Controller</title>
   <style>
+    :root {
+      --bg-top: #1f5130;
+      --bg-bottom: #0f2a18;
+      --panel: rgba(255, 255, 255, 0.08);
+      --panel-border: rgba(255, 255, 255, 0.14);
+      --text: #f4f8f2;
+      --muted: rgba(244, 248, 242, 0.7);
+      --accent: #ffc94a;
+      --aim: #4aa3ff;
+      --putt: #43b05c;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     body {
       margin: 0;
+      min-height: 100vh;
+      padding: 16px 16px 24px;
       display: flex;
       flex-direction: column;
-      justify-content: center;
       align-items: center;
-      height: 100vh;
-      background-color: #355E3B; /* Golf green color */
-      font-family: Arial, sans-serif;
-      touch-action: none; /* Prevent browser handling of touch gestures */
-      color: white;
+      gap: 12px;
+      background: linear-gradient(180deg, var(--bg-top), var(--bg-bottom)) fixed;
+      color: var(--text);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      touch-action: manipulation;
+      user-select: none;
+      -webkit-user-select: none;
     }
-    .button-container {
-      display: flex;
-      flex-direction: column;
-      width: 90%;
-      gap: 20px;
-      margin: 20px 0;
-    }
-    .button {
+    header {
       width: 100%;
-      height: 100px; /* Taller buttons */
-      font-size: 20px;
-      margin: 0; /* Handled by gap */
-      border: none;
-      border-radius: 10px;
-      cursor: pointer;
       display: flex;
-      justify-content: center;
       align-items: center;
-      text-transform: uppercase;
-      font-weight: bold;
-      transition: transform 0.1s;
+      justify-content: space-between;
+      gap: 8px;
     }
-    .button:active {
-      transform: scale(0.98);
-    }
-    #aimButton {
-      background-color: #2196F3; /* Blue */
-      color: white;
-    }
-    #puttButton {
-      background-color: #4CAF50; /* Green */
-      color: white;
-      height: 140px; /* Putt button slightly larger */
-    }
-    #turnBanner {
-      width: 90%;
-      padding: 14px 10px;
-      border-radius: 10px;
-      text-align: center;
-      font-size: 22px;
-      font-weight: bold;
-      background-color: rgba(0, 0, 0, 0.45);
-      box-sizing: border-box;
-    }
-    #turnBanner.my-turn {
-      background-color: #FFC107;
-      color: #222;
+    h1 {
+      font-size: 18px;
+      margin: 0;
+      display: flex;
+      align-items: center;
+      white-space: nowrap;
     }
     #playerBadge {
       display: inline-block;
-      width: 16px;
-      height: 16px;
+      width: 18px;
+      height: 18px;
       border-radius: 50%;
-      margin-right: 8px;
-      vertical-align: middle;
-      background-color: transparent;
-      border: 2px solid white;
-    }
-    .button-container.locked .button {
-      opacity: 0.35;
-      pointer-events: none;
-    }
-    #nameInput {
-      width: 80%;
-      font-size: 20px;
-      padding: 12px;
-      border-radius: 8px;
-      border: none;
-      margin-bottom: 12px;
-      text-align: center;
-    }
-    #permissionButton {
-      height: 60px;
-      background-color: #FF9800;
-    }
-    #statusDisplay {
-      font-size: 18px;
-      color: white;
-      margin: 20px;
-      text-align: center;
-      padding: 10px;
-      max-width: 80%;
+      margin-right: 10px;
+      border: 2px solid rgba(255, 255, 255, 0.85);
+      box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.2);
     }
     #connectionStatus {
-      margin-top: 20px;
-      padding: 10px;
-      border-radius: 5px;
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 12px;
+      background: var(--panel);
+      color: var(--muted);
+      max-width: 60%;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #connectionStatus.connected { color: #b9f6ca; }
+    #connectionStatus.disconnected { color: #ffab91; }
+    .card {
+      width: 100%;
+      background: var(--panel);
+      border: 1px solid var(--panel-border);
+      border-radius: 16px;
+      padding: 12px 14px;
+    }
+    #turnBanner {
       text-align: center;
-      width: 80%;
+      font-size: 20px;
+      font-weight: 700;
+      transition: background-color 0.2s, color 0.2s, box-shadow 0.2s;
     }
-    .connected {
-      background-color: rgba(76, 175, 80, 0.5);
+    #turnBanner.my-turn {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #2a2000;
+      box-shadow: 0 0 24px rgba(255, 201, 74, 0.45);
     }
-    .disconnected {
-      background-color: rgba(244, 67, 54, 0.5);
+    #statusDisplay {
+      min-height: 22px;
+      font-size: 15px;
+      color: var(--muted);
+      text-align: center;
     }
     .permission-section {
       display: flex;
       flex-direction: column;
       align-items: center;
+      gap: 10px;
+    }
+    .permission-section h3 { margin: 4px 0 0; }
+    #nameInput {
       width: 100%;
-      margin-bottom: 20px;
-    }
-    .ios-note {
-      font-style: italic;
-      color: #EEE;
-      font-size: 14px;
-      margin-top: 5px;
+      font-size: 20px;
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px solid var(--panel-border);
+      background: rgba(0, 0, 0, 0.25);
+      color: var(--text);
       text-align: center;
-      max-width: 80%;
+      user-select: text;
+      -webkit-user-select: text;
     }
-    #debugInfo {
-      position: fixed;
-      bottom: 10px;
-      left: 10px;
-      font-size: 12px;
-      color: #EEE;
-      max-width: 80%;
-      background-color: rgba(0, 0, 0, 0.7);
-      padding: 5px;
-      border-radius: 5px;
-    }
-    
-    /* Golf-specific styling */
-    h2 {
+    .button {
+      border: none;
+      border-radius: 14px;
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
       color: white;
-      text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+      cursor: pointer;
+      transition: transform 0.08s, opacity 0.2s, background-color 0.2s;
     }
-    
-    .golf-icon {
-      font-size: 24px;
-      margin-bottom: 10px;
+    .button:active { transform: scale(0.97); }
+    #permissionButton {
+      width: 100%;
+      height: 56px;
+      background: #ff9800;
     }
-    
-    .control-guide {
-      margin-top: 20px;
-      padding: 10px;
-      background-color: rgba(0, 0, 0, 0.5);
-      border-radius: 5px;
-      font-size: 14px;
-      max-width: 80%;
-      text-align: center;
+    .ios-note { margin: 0; font-size: 13px; color: var(--muted); }
+
+    #controlsSection {
+      width: 100%;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
     }
+    #aimButton {
+      width: 100%;
+      height: 64px;
+      background-color: var(--aim);
+    }
+    .putt-wrap {
+      position: relative;
+      width: 210px;
+      height: 210px;
+    }
+    .putt-wrap svg {
+      position: absolute;
+      inset: 0;
+      transform: rotate(-90deg);
+      pointer-events: none;
+    }
+    #powerRing {
+      fill: none;
+      stroke-width: 10;
+      stroke-linecap: round;
+      transition: stroke-dashoffset 0.08s linear, stroke 0.2s;
+    }
+    .ring-track { fill: none; stroke: rgba(255, 255, 255, 0.12); stroke-width: 10; }
+    #puttButton {
+      position: absolute;
+      inset: 16px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 30%, #6fd283, var(--putt) 60%, #2e7d43);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), inset 0 -6px 12px rgba(0, 0, 0, 0.2);
+      font-size: 26px;
+    }
+    #puttButton.active {
+      background: radial-gradient(circle at 35% 30%, #ffe08a, #f5b700 60%, #c78f00);
+      color: #2a2000;
+    }
+    #puttLabel { pointer-events: none; }
+    .button-container.locked #aimButton,
+    .button-container.locked:not(.practice) #puttButton {
+      opacity: 0.3;
+      pointer-events: none;
+    }
+    .settings {
+      width: 100%;
+      display: flex;
+      gap: 8px;
+    }
+    .chip {
+      flex: 1;
+      padding: 10px 4px;
+      border-radius: 12px;
+      border: 1px solid var(--panel-border);
+      background: var(--panel);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .chip.selected {
+      background: rgba(255, 255, 255, 0.9);
+      color: #173d22;
+    }
+    .trace-card { padding: 8px 10px; }
+    .trace-card .label { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+    #traceCanvas { width: 100%; height: 90px; display: block; }
+    .control-guide { font-size: 13px; line-height: 1.6; color: var(--muted); }
+    .control-guide b { color: var(--text); }
+    #debugInfo { font-size: 11px; color: var(--muted); min-height: 14px; }
   </style>
 </head>
 <body>
-  <div id="roomInfo">
-    <h2><span id="playerBadge"></span>Mini Golf Controller</h2>
-  </div>
+  <header>
+    <h1><span id="playerBadge"></span>Mini Golf</h1>
+    <div id="connectionStatus">Connecting...</div>
+  </header>
 
-  <div id="turnBanner">Joining...</div>
-  
+  <div id="turnBanner" class="card">Joining...</div>
   <div id="statusDisplay">Loading...</div>
-  
-  <div class="permission-section" id="permissionSection">
-    <h3>Your Name</h3>
+
+  <div class="permission-section card" id="permissionSection">
+    <h3>Your name</h3>
     <input id="nameInput" type="text" maxlength="16" placeholder="Player name" autocomplete="nickname">
     <button id="permissionButton" class="button">JOIN &amp; ENABLE SENSORS</button>
-    <p class="ios-note">Required for aiming and putting</p>
+    <p class="ios-note">Motion sensors are used to aim and swing</p>
   </div>
-  
+
   <div class="button-container locked" id="controlsSection" style="display:none;">
-    <button id="aimButton" class="button">HOLD TO SET ANGLE</button>
-    <button id="puttButton" class="button">HOLD TO PUTT</button>
+    <button id="aimButton" class="button">HOLD TO AIM</button>
+
+    <div class="putt-wrap">
+      <svg viewBox="0 0 210 210" width="210" height="210" aria-hidden="true">
+        <circle class="ring-track" cx="105" cy="105" r="92"></circle>
+        <circle id="powerRing" cx="105" cy="105" r="92"></circle>
+      </svg>
+      <button id="puttButton" class="button"><span id="puttLabel">PUTT</span></button>
+    </div>
+
+    <div class="settings">
+      <button class="chip" data-scale="soft">Soft</button>
+      <button class="chip" data-scale="normal">Normal</button>
+      <button class="chip" data-scale="firm">Firm</button>
+      <button class="chip" id="practiceToggle">Practice: OFF</button>
+    </div>
+
+    <div class="card trace-card">
+      <div class="label">Last stroke · putter angle over time</div>
+      <canvas id="traceCanvas" width="600" height="180"></canvas>
+    </div>
   </div>
-  
-  <div class="control-guide">
-    1. Hold BLUE to Aim <br>
-    2. Release to Lock <br>
-    3. Hold GREEN & Swing to Putt!
+
+  <div class="card control-guide">
+    <b>Aim:</b> hold AIM and turn the phone to move the line left or right.<br>
+    <b>Putt:</b> hold PUTT and keep still until it buzzes, then swing back and through like a putter. The ball goes at impact.<br>
+    <b>Power:</b> a longer backswing gives a longer putt. Accelerate through the ball.
   </div>
-  
-  <div id="connectionStatus">Connecting to server...</div>
-  
+
   <div id="debugInfo"></div>
-  
+
   <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.1/socket.io.min.js"></script>
+  <script src="swing.js"></script>
   <script src="controller.js"></script>
 </body>
 </html>

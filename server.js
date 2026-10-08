@@ -217,6 +217,17 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Per-stroke sensor summary for tuning the swing model from production logs
+  let lastSwingLog = 0;
+  socket.on('swing_log', (data) => {
+    if (role !== 'controller' || !currentRoom || !data || typeof data !== 'object') return;
+    const now = Date.now();
+    if (now - lastSwingLog < 1500) return;
+    lastSwingLog = now;
+    const line = JSON.stringify({ room: currentRoom, player: playerId, ...data });
+    if (line.length <= 4096) console.log('[swing]', line);
+  });
+
   // --- Game screen -> controllers ---
 
   socket.on('turn', (data) => {

@@ -1,6 +1,7 @@
 const THREE = window.THREE;
 const CANNON = window.CANNON;
 import { gameConfig } from '../../config/gameConfig.js';
+import { grassTexture } from '../../utils/Textures.js';
 
 export class Hill {
   constructor(sceneManager, physicsManager) {
@@ -10,9 +11,8 @@ export class Hill {
     this.hillMesh = null;
     this.hillBody = null;
 
-    this.material = new THREE.MeshStandardMaterial({
-      color: 0x2E8B57 // SeaGreen - slightly different from ground (0x228B22) for visibility
-    });
+    // Slightly darker tint than the green so the mound reads as raised
+    this.material = new THREE.MeshStandardMaterial({ map: grassTexture(), color: 0xc8dcc0, roughness: 0.95 });
   }
 
   create(x, z, height) {

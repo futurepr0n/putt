@@ -13,8 +13,9 @@ export class DirectionIndicator {
 
   create() {
     // Create arrow components
-    const arrowLength = 3.0; // Significantly longer (was 1)
-    const arrowHeadSize = 0.5; // Larger head
+    // Short pointer at the ball; the dotted path shows the full line
+    const arrowLength = 0.7;
+    const arrowHeadSize = 0.14;
 
     // Create arrow body
     const bodyGeometry = new THREE.CylinderGeometry(0.04, 0.04, arrowLength, 8);

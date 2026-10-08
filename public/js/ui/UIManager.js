@@ -1,6 +1,8 @@
 import { DirectionIndicator } from './DirectionIndicator.js';
 import { Scoreboard } from './Scoreboard.js';
 import { gameConfig } from '../config/gameConfig.js';
+import { ShotEffects, predictedDistance } from './ShotEffects.js';
+import { audioReady } from '../utils/Sound.js';
 import { CameraControls } from './CameraControls.js';
 import { DomUtils } from '../utils/DomUtils.js';
 
@@ -24,6 +26,11 @@ export class UIManager {
 
     this.scoreboard = new Scoreboard();
     this.scoreboard.init();
+
+    this.effects = new ShotEffects(this.sceneManager);
+    this.effects.init();
+
+    this.createSoundPrompt();
 
     // Create camera controls
     this.cameraControls = new CameraControls(this.sceneManager);
@@ -73,31 +80,14 @@ export class UIManager {
     this.directionIndicator.update(ballPosition, directionData);
   }
 
+  // Live swing: path stretches to where this much power would roll the ball
   updateSwingVisuals(swingData) {
-    // Show live feedback for swing (Ghost Arrow or Real-time adjustment)
-    if (!this.lastDirectionData) return;
-
-    const ballPosition = this.game.courseManager.getBallPosition();
-    if (!ballPosition) return;
-
-    // Calculate resulting vector from Locked Angle + Deviation
-    const baseAngle = Math.atan2(this.lastDirectionData.x, this.lastDirectionData.z);
-    const deviationRad = swingData.deviation * (Math.PI / 180);
-    const finalAngle = baseAngle + deviationRad;
-
-    // Power determines length/scale
-    // swingData.power is 0.0 - 1.5 roughly
-    const visualPower = Math.max(0.2, swingData.power * 20); // Scale up for visual magnitude
-
-    const visualDir = {
-      x: Math.sin(finalAngle) * visualPower,
-      y: 0,
-      z: Math.cos(finalAngle) * visualPower
-    };
-
-    // Reuse the main arrow for feedback?
-    // Or maybe change its color?
-    this.directionIndicator.update(ballPosition, visualDir, true); // true = isSwingFeedback
+    if (!(swingData.power > 0)) {
+      this.game.refreshAimArrow();
+      return;
+    }
+    const angle = this.game.aimAngle + (Number(swingData.deviation) || 0) * Math.PI / 180;
+    this.effects.showPath(this.game.courseManager.getBallPosition(), angle, predictedDistance(swingData.power), 0x5dff7a);
   }
 
   setAimColor(color) {
@@ -106,6 +96,11 @@ export class UIManager {
 
   hideAim() {
     this.directionIndicator.hide();
+    this.effects.hidePath();
+  }
+
+  showAimPath(angle, length, color) {
+    this.effects.showPath(this.game.courseManager.getBallPosition(), angle, length, color);
   }
 
   setTurnBanner(player, detail) {
@@ -128,7 +123,30 @@ export class UIManager {
     this.scoreboard.showGameComplete(standings, pars);
   }
 
-  update() {}
+  // Browsers block audio until the TV screen is clicked once
+  createSoundPrompt() {
+    this.soundPrompt = DomUtils.createElement('button', {
+      position: 'absolute',
+      bottom: '10px',
+      left: '50%',
+      transform: 'translateX(-50%)',
+      padding: '8px 16px',
+      color: 'white',
+      backgroundColor: 'rgba(0, 0, 0, 0.6)',
+      border: '1px solid rgba(255,255,255,0.3)',
+      borderRadius: '20px',
+      cursor: 'pointer',
+      zIndex: '150'
+    }, '🔇 Click to enable sound');
+    document.body.appendChild(this.soundPrompt);
+  }
+
+  update() {
+    if (this.soundPrompt && audioReady()) {
+      this.soundPrompt.remove();
+      this.soundPrompt = null;
+    }
+  }
 
   addDebugControls() {
     // Reset Ball button

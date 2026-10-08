@@ -11,6 +11,10 @@ const permissionButton = document.getElementById('permissionButton');
 const permissionSection = document.getElementById('permissionSection');
 const controlsSection = document.getElementById('controlsSection'); // Container for controls
 const debugInfo = document.getElementById('debugInfo');
+const puttLabel = document.getElementById('puttLabel');
+const powerRing = document.getElementById('powerRing');
+const traceCanvas = document.getElementById('traceCanvas');
+const practiceToggle = document.getElementById('practiceToggle');
 const turnBanner = document.getElementById('turnBanner');
 const playerBadge = document.getElementById('playerBadge');
 const nameInput = document.getElementById('nameInput');
@@ -44,12 +48,6 @@ let isAiming = false;
 let lockedAngle = 0; // The angle set by the user (degrees 0-360)
 let aimInterval = null;
 
-// Putt State
-let isPutting = false;
-let puttStartTime = 0;
-let puttStartOrientation = null; // Snapshot of orientation when putt button pressed
-let orientationHistory = [];
-let motionHistory = []; // Gyro rotation rates (deg/s) during the swing, when available
 
 
 // --- 1. Orientation Handling ---
@@ -65,21 +63,7 @@ function handleOrientation(event) {
   if (event.beta !== null) currentOrientation.beta = event.beta;
   if (event.gamma !== null) currentOrientation.gamma = event.gamma;
 
-  if (isPutting) {
-    // Record high-freq history for swing analysis
-    orientationHistory.push({
-      beta: currentOrientation.beta,
-      gamma: currentOrientation.gamma,
-      alpha: currentOrientation.alpha,
-      time: sampleTime(event)
-    });
-  }
-}
-
-function handleMotion(event) {
-  const rate = event.rotationRate;
-  if (!isPutting || !rate || rate.beta === null || rate.gamma === null) return;
-  motionHistory.push({ beta: rate.beta, gamma: rate.gamma, time: sampleTime(event) });
+  orientationRateSample(event);
 }
 
 // Turn of the phone since aiming began, in degrees (-180..180, positive = turned left)
@@ -105,7 +89,7 @@ function startAiming() {
   if (isAiming || !isMyTurn) return;
   isAiming = true;
   aimBaseAlpha = currentOrientation.alpha;
-  aimButton.style.backgroundColor = '#1976D2'; // Darker Blue
+  aimButton.style.backgroundColor = '#1f78d1';
   aimButton.textContent = "Aiming...";
 
   // Game anchors the arrow's current direction to this phone pose
@@ -126,7 +110,7 @@ function stopAiming() {
 
   lockedAngle = getAimDelta();
 
-  aimButton.style.backgroundColor = '#2196F3'; // Original Blue
+  aimButton.style.backgroundColor = '';
   aimButton.textContent = `Set! (${lockedAngle.toFixed(0)}°)`;
   statusDisplay.textContent = "Angle Locked. Hold Green to Putt.";
 
@@ -136,250 +120,232 @@ function stopAiming() {
 
 
 // --- 3. Putting Logic ---
+// Hold PUTT -> hold still (address) -> buzz -> swing back and through.
+// The stroke is read from the gyroscope (see swing.js); the putt is sent at impact + follow-through.
 
-let swingInterval = null;
+const POWER_SCALES = { soft: 0.8, normal: 1, firm: 1.2 };
+let powerScaleKey = storageGet('putt.powerScale') || 'normal';
+let practiceMode = false;
+
+let puttState = 'idle'; // idle | address | swinging
+let puttStartTime = 0;
+let addressSamples = [];
+let strokeSamples = [];
+let maxAccel = 0;
+let lastLiveEmit = 0;
+let puttTimeout = null;
+let gyroAvailable = false;
+let lastOrientationSample = null;
+
+function powerScale() {
+  return POWER_SCALES[powerScaleKey] || 1;
+}
+
+// Every angular-velocity reading (deg/s, device axes) funnels through here
+function onRateSample(sample) {
+  if (puttState === 'address') {
+    addressSamples.push(sample);
+    const waited = sample.t - addressSamples[0].t;
+    if (Swing.isStill(addressSamples, sample.t) || waited > 2000) beginStroke();
+  } else if (puttState === 'swinging') {
+    strokeSamples.push(sample);
+    updateLiveStroke(sample.t);
+  }
+}
+
+function handleMotion(event) {
+  const acc = event.acceleration;
+  if (puttState === 'swinging' && acc && acc.x !== null) {
+    maxAccel = Math.max(maxAccel, Math.hypot(acc.x, acc.y, acc.z));
+  }
+  const rate = event.rotationRate;
+  if (!rate || rate.alpha === null || rate.beta === null || rate.gamma === null) return;
+  if (gyroSensor) return; // Generic Sensor API already feeding higher-rate samples
+  gyroAvailable = true;
+  onRateSample({ t: sampleTime(event), x: rate.beta, y: rate.gamma, z: rate.alpha });
+}
+
+// Fallback when the gyroscope is unavailable (e.g. motion permission denied):
+// approximate rates from orientation changes
+function orientationRateSample(event) {
+  if (gyroAvailable) return;
+  const t = sampleTime(event);
+  const prev = lastOrientationSample;
+  lastOrientationSample = { t, a: currentOrientation.alpha, b: currentOrientation.beta, g: currentOrientation.gamma };
+  if (!prev || t <= prev.t) return;
+  const dt = (t - prev.t) / 1000;
+  onRateSample({
+    t,
+    x: wrapDegrees(currentOrientation.beta - prev.b) / dt,
+    y: wrapDegrees(currentOrientation.gamma - prev.g) / dt,
+    z: wrapDegrees(currentOrientation.alpha - prev.a) / dt
+  });
+}
+
+// Chrome on Android: Generic Sensor API gives ~120 Hz instead of devicemotion's ~60 Hz
+let gyroSensor = null;
+function startGyroSensor() {
+  if (!('Gyroscope' in window)) return;
+  try {
+    const sensor = new Gyroscope({ frequency: 120 });
+    const toDeg = 180 / Math.PI;
+    sensor.addEventListener('reading', () => {
+      gyroAvailable = true;
+      onRateSample({ t: sensor.timestamp || performance.now(), x: sensor.x * toDeg, y: sensor.y * toDeg, z: sensor.z * toDeg });
+    });
+    sensor.addEventListener('error', () => { gyroSensor = null; });
+    sensor.start();
+    gyroSensor = sensor;
+  } catch (e) {
+    gyroSensor = null;
+  }
+}
 
 function startPutt() {
-  if (!isMyTurn) return;
-  isPutting = true;
-  puttStartTime = Date.now();
-  orientationHistory = [];
-  motionHistory = [];
+  // Practice swings are allowed while waiting for your turn
+  if ((!isMyTurn && !practiceMode) || puttState !== 'idle') return;
+  puttState = 'address';
+  puttStartTime = performance.now();
+  addressSamples = [];
+  strokeSamples = [];
+  maxAccel = 0;
+  setPowerRing(0);
+  puttButton.classList.add('active');
+  puttLabel.textContent = 'HOLD STILL';
+  statusDisplay.textContent = 'Set up at the ball and hold still...';
+  clearTimeout(puttTimeout);
+  puttTimeout = setTimeout(() => finishStroke(), 8000);
+}
 
-  // Capture the 'Zero' stance
-  puttStartOrientation = { ...currentOrientation };
+function beginStroke() {
+  puttState = 'swinging';
+  strokeSamples = addressSamples.slice(-1);
+  if (navigator.vibrate) navigator.vibrate(25);
+  puttLabel.textContent = 'SWING';
+  statusDisplay.textContent = practiceMode ? 'Practice swing - nothing is sent' : 'Swing back and through the ball';
+}
 
-  puttButton.style.backgroundColor = '#388E3C';
-  puttButton.textContent = "Swing Now!";
-  statusDisplay.textContent = "Ready...";
+function updateLiveStroke(now) {
+  const backswing = Swing.liveBackswing(strokeSamples);
+  const livePower = Swing.predictedPower(backswing, powerScale());
+  setPowerRing(livePower);
 
-  // Start streaming live swing data
-  if (swingInterval) clearInterval(swingInterval);
-  swingInterval = setInterval(() => {
-    streamSwingData();
+  if (!practiceMode && now - lastLiveEmit > 50) {
+    lastLiveEmit = now;
+    socket.emit('swing_data', { power: livePower, deviation: 0 });
+  }
 
-    // VERBOSE DEBUG UI
-    if (statusDisplay && orientationHistory.length > 0) {
-      const last = orientationHistory[orientationHistory.length - 1];
-      // Show Deltas from start
-      const dB = (last.beta - puttStartOrientation.beta).toFixed(0);
-      const dG = (last.gamma - puttStartOrientation.gamma).toFixed(0);
-      const dA = (last.alpha - puttStartOrientation.alpha).toFixed(0);
-
-      statusDisplay.innerHTML = `
-                Moving!<br>
-                Samples: ${orientationHistory.length}<br>
-                ΔBeta: ${dB}° (Pitch)<br>
-                ΔGamma: ${dG}° (Roll)<br>
-                ΔAlpha: ${dA}° (Turn)
-            `;
-    } else if (orientationHistory.length === 0) {
-      statusDisplay.innerHTML = "Waiting for data...<br>(Check Permissions?)";
-    }
-  }, 50);
+  // Auto-finish once the putter has come through the ball and followed through
+  if (strokeSamples.length % 3 === 0) {
+    const result = Swing.analyzeStroke(strokeSamples, { powerScale: powerScale(), maxAccel });
+    if (result.ok && now - result.impactT >= Swing.SWING.followThroughMs) finishStroke(result);
+  }
 }
 
 function stopPutt() {
-  if (!isPutting) return;
-  isPutting = false;
-  clearInterval(swingInterval);
+  if (puttState === 'address') {
+    resetPuttButton();
+    statusDisplay.textContent = 'Keep holding PUTT until it buzzes, then swing';
+  } else if (puttState === 'swinging') {
+    finishStroke();
+  }
+}
 
-  const duration = (Date.now() - puttStartTime) / 1000;
+function resetPuttButton() {
+  puttState = 'idle';
+  clearTimeout(puttTimeout);
+  puttButton.classList.remove('active');
+  puttLabel.textContent = 'PUTT';
+}
 
-  puttButton.style.backgroundColor = '#4CAF50';
-  puttButton.textContent = "HOLD TO PUTT";
+function finishStroke(result) {
+  if (puttState === 'idle') return;
+  const wasSwinging = puttState === 'swinging';
+  resetPuttButton();
+  if (!wasSwinging) {
+    statusDisplay.textContent = 'No swing detected';
+    return;
+  }
+  result = result || Swing.analyzeStroke(strokeSamples, { powerScale: powerScale(), maxAccel });
+  drawTrace(result);
 
-  // Debug: Verify duration and history check
-  debug(`Putt Stop. Duration: ${duration.toFixed(2)}s. History: ${orientationHistory.length}`);
-
-  if (duration < 0.1) {
-    statusDisplay.textContent = "Tap detected. Hold button to putt.";
+  if (!result.ok) {
+    setPowerRing(0);
+    statusDisplay.textContent = result.reason;
+    if (!practiceMode) socket.emit('swing_data', { power: 0, deviation: 0 });
     return;
   }
 
-  // Analyze Swing
-  analyzeSwingAndSend(duration);
-}
+  setPowerRing(result.power);
+  const faceText = Math.abs(result.face) < 0.5 ? 'square' : `${Math.abs(result.face).toFixed(1)}° ${result.face > 0 ? 'left' : 'right'}`;
+  const summary = `${Math.round(result.power * 100)}% · backswing ${result.backswing.toFixed(0)}° · tempo ${result.tempo.toFixed(2)} · face ${faceText}`;
 
-function streamSwingData() {
-  if (orientationHistory.length < 2) return;
-
-  // Provide live feedback on power/deviation
-  const curr = orientationHistory[orientationHistory.length - 1];
-
-  // Calculate current deviation from start
-  let alphaDiff = curr.alpha - puttStartOrientation.alpha;
-  alphaDiff = ((alphaDiff + 540) % 360) - 180;
-
-  // Calculate instantaneous power (roughly)
-  const prev = orientationHistory[Math.max(0, orientationHistory.length - 2)];
-  const dt = (curr.time - prev.time) / 1000;
-  let speed = 0;
-  if (dt > 0) {
-    const d_beta = curr.beta - prev.beta;
-    const d_gamma = curr.gamma - prev.gamma;
-    speed = Math.sqrt(d_beta * d_beta + d_gamma * d_gamma) / dt;
+  if (practiceMode) {
+    statusDisplay.textContent = `Practice: ${summary}`;
+    return;
   }
 
-  const normalizedPower = Math.min(speed / 300, 1.5);
-
-  socket.emit('swing_data', {
-    deviation: alphaDiff,
-    power: normalizedPower
+  statusDisplay.textContent = `Putt! ${summary}`;
+  socket.emit('throw', { power: result.power, deviation: result.face });
+  socket.emit('swing_log', {
+    power: +result.power.toFixed(3),
+    face: +result.face.toFixed(2),
+    backswing: +result.backswing.toFixed(1),
+    tempo: +result.tempo.toFixed(2),
+    impactSpeed: Math.round(result.impactSpeed),
+    confidence: +result.confidence.toFixed(2),
+    scale: powerScaleKey,
+    source: gyroSensor ? 'gyroscope-api' : gyroAvailable ? 'devicemotion' : 'orientation',
+    samples: strokeSamples.length,
+    trace: result.trace
   });
 }
 
-function analyzeSwingAndSend(duration) {
-  if (orientationHistory.length < 5) {
-    statusDisplay.textContent = "Swing too short. Try again.";
-    return;
-  }
+// --- Stroke UI: power ring and stroke trace ---
 
-  // 1. Determine Major Swing Axis (Beta vs Gamma)
-  // Calculate range of motion for both
-  let minBeta = 999, maxBeta = -999, minGamma = 999, maxGamma = -999;
-  orientationHistory.forEach(h => {
-    minBeta = Math.min(minBeta, h.beta);
-    maxBeta = Math.max(maxBeta, h.beta);
-    minGamma = Math.min(minGamma, h.gamma);
-    maxGamma = Math.max(maxGamma, h.gamma);
-  });
+function setPowerRing(power) {
+  const circumference = 2 * Math.PI * 92;
+  powerRing.style.strokeDasharray = `${circumference}`;
+  powerRing.style.strokeDashoffset = `${circumference * (1 - Math.max(0, Math.min(power, 1)))}`;
+  powerRing.style.stroke = power > 0.85 ? '#ff7043' : power > 0.5 ? '#ffd54f' : '#9ccc65';
+}
 
-  const rangeBeta = maxBeta - minBeta;
-  const rangeGamma = maxGamma - minGamma;
+// Putter angle over time: backswing up, impact where it crosses the address line
+function drawTrace(result) {
+  const ctx = traceCanvas.getContext('2d');
+  const w = traceCanvas.width, h = traceCanvas.height;
+  ctx.clearRect(0, 0, w, h);
+  const trace = result.trace || [];
+  if (trace.length < 2) return;
+  const tMax = trace[trace.length - 1][0] || 1;
+  const aMax = Math.max(10, ...trace.map(p => Math.abs(p[1])));
+  const x = (t) => 8 + (t / tMax) * (w - 16);
+  const y = (a) => h / 2 - (a / aMax) * (h / 2 - 10);
 
-  // Assuming "Face Down" grip:
-  // If holding like a putter, swing is mainy Pitch (Beta) or Roll (Gamma) depending on exact hold.
-  // We'll just define the "Swing Axis" as the one with more movement.
-  const axis = rangeBeta > rangeGamma ? 'beta' : 'gamma';
-  const startVal = puttStartOrientation[axis];
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(0, h / 2); ctx.lineTo(w, h / 2); ctx.stroke();
+  ctx.setLineDash([]);
 
-  // 2. Identify Backswing Apex
-  // Finds the point furthest from startVal
-  // note: could be positive or negative depending on direction
-  let maxDeviation = 0;
-  let apexIndex = 0;
+  ctx.strokeStyle = result.ok ? '#9ccc65' : '#ff8a65';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  trace.forEach(([t, a], i) => (i ? ctx.lineTo(x(t), y(a)) : ctx.moveTo(x(t), y(a))));
+  ctx.stroke();
 
-  for (let i = 0; i < orientationHistory.length; i++) {
-    const val = orientationHistory[i][axis];
-    const diff = Math.abs(val - startVal); // Simple distance
-    // handle wrapping? Beta -180 to 180. Gamma -90 to 90.
-    // For simplicity assume no full 360 wrap in a single putt swing.
-
-    if (diff > maxDeviation) {
-      maxDeviation = diff;
-      apexIndex = i;
-    }
-  }
-
-  // Check if backswing was significant
-  if (maxDeviation < 5.0) {
-    statusDisplay.textContent = "Minimal motion. Swing larger.";
-    debug("Motion too small: " + maxDeviation.toFixed(1));
-    return;
-  }
-
-  // 3. Find Impact Point (Return to Start)
-  // Search from Apex forward
-  let impactIndex = -1;
-  let minDiffAtImpact = 999;
-
-  // We want to find where it crosses startVal, or gets closest to it *after* the apex
-  for (let i = apexIndex + 1; i < orientationHistory.length; i++) {
-    const val = orientationHistory[i][axis];
-    const diff = Math.abs(val - startVal);
-
-    // If we crossed zero (diff increases after decreasing?), implies we passed it.
-    // Let's just find the minimum diff to startVal after Apex.
-    if (diff < minDiffAtImpact) {
-      minDiffAtImpact = diff;
-      impactIndex = i;
-    } else {
-      // function started increasing again, maybe we passed impact? 
-      // Stick with the closest point found so far.
-      // But we should continue in case there's noise.
-    }
-  }
-
-  // Robust check: if we didn't return reasonably close to start
-  if (minDiffAtImpact > 15.0) {
-    // "You didn't complete the swing"
-    // But maybe they just followed through super fast?
-    // Let's use the last point if we can't find a good impact.
-    debug("Didn't return to start. Closest: " + minDiffAtImpact.toFixed(1));
-  }
-
-  // If impact not found (e.g. backswing only), default to end
-  if (impactIndex === -1) impactIndex = orientationHistory.length - 1;
-
-  // 4. Calculate Velocity AT Impact
-  // Look at window around impactIndex
-  const p1 = orientationHistory[Math.max(0, impactIndex - 2)];
-  const p2 = orientationHistory[Math.min(orientationHistory.length - 1, impactIndex + 2)];
-
-  const dt = (p2.time - p1.time) / 1000;
-  let impactSpeed = 0;
-
-  if (dt > 0) {
-    const d_axis = p2[axis] - p1[axis];
-    // We care about speed in the *Forward* direction.
-    // Backswing direction was (Apex - Start).
-    // Forward direction should be opposite.
-    const swingDir = orientationHistory[apexIndex][axis] - startVal; // e.g. +20
-    const velocityDir = d_axis; // e.g. -40 (coming back)
-
-    // Velocity should oppose backswing
-    if (Math.sign(swingDir) !== Math.sign(velocityDir)) {
-      impactSpeed = Math.abs(d_axis) / dt;
-    } else {
-      // Moving in same direction as backswing? weird.
-      impactSpeed = 0;
-    }
-  }
-
-  // Prefer the gyro: peak forward-swing rotation rate around impact (after the apex)
-  const gyroSpeed = gyroImpactSpeed(axis, orientationHistory[apexIndex].time, orientationHistory[impactIndex].time);
-  if (gyroSpeed !== null) impactSpeed = gyroSpeed;
-
-  // 5. Calculate Deviation (Slice/Hook) AT Impact
-  // Compare Alpha at Impact vs Start
-  const impactAlpha = orientationHistory[impactIndex].alpha;
-  const startAlpha = puttStartOrientation.alpha;
-  let alphaDiff = impactAlpha - startAlpha;
-  alphaDiff = ((alphaDiff + 540) % 360) - 180;
-
-  const deviation = alphaDiff;
-
-  // 6. Final Power Calculation
-  // Golf putt: max speed around 300-400 dps is hard.
-  const normalizedPower = Math.min(impactSpeed / 400, 1.5);
-
-  // Direction is owned by the game's aim arrow; send power plus swing deviation
-  const finalRad = (lockedAngle + deviation) * (Math.PI / 180);
-  const velocity = {
-    x: Math.sin(finalRad) * normalizedPower,
-    y: 0,
-    z: Math.cos(finalRad) * normalizedPower,
-    power: Math.min(normalizedPower, 1),
-    deviation
-  };
-
-  debug(`Swing Valid. Axis:${axis} Apex:${maxDeviation.toFixed(0)} Speed:${impactSpeed.toFixed(0)} Dev:${deviation.toFixed(1)}`);
-  statusDisplay.textContent = `Putt! Power: ${(normalizedPower * 100).toFixed(0)}%`;
-
-  if (normalizedPower > 0.05) {
-    socket.emit('throw', velocity);
-  } else {
-    statusDisplay.textContent = "Swing too weak/slow.";
+  if (result.ok) {
+    const impactX = x(result.impactT - strokeSamples[0].t);
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(impactX, h / 2, 5, 0, Math.PI * 2); ctx.fill();
+    ctx.font = '12px system-ui, sans-serif';
+    ctx.fillText('impact', Math.min(impactX + 7, w - 45), h / 2 - 7);
   }
 }
 
-
-function gyroImpactSpeed(axis, apexTime, impactTime) {
-  const windowMs = 80;
-  const samples = motionHistory.filter(m => m.time > apexTime && Math.abs(m.time - impactTime) <= windowMs);
-  if (samples.length < 2) return null;
-  return Math.max(...samples.map(m => Math.abs(m[axis])));
+function setPowerScale(key) {
+  powerScaleKey = key;
+  storageSet('putt.powerScale', key);
+  document.querySelectorAll('[data-scale]').forEach(b => b.classList.toggle('selected', b.dataset.scale === key));
 }
 
 
@@ -403,6 +369,16 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 
   if (permissionButton) permissionButton.addEventListener('click', requestPermissions);
+
+  document.querySelectorAll('[data-scale]').forEach(b => b.addEventListener('click', () => setPowerScale(b.dataset.scale)));
+  if (practiceToggle) {
+    practiceToggle.addEventListener('click', () => {
+      practiceMode = !practiceMode;
+      practiceToggle.classList.toggle('selected', practiceMode);
+      controlsSection.classList.toggle('practice', practiceMode);
+      practiceToggle.textContent = practiceMode ? 'Practice: ON' : 'Practice: OFF';
+    });
+  }
 });
 
 function joinGame() {
@@ -442,10 +418,12 @@ function enableControls() {
   statusDisplay.textContent = "Joined! Wait for your turn.";
   joinGame();
 
-  // Use a single source: mixing relative and absolute alpha makes the aim jump
-  const eventName = 'ondeviceorientationabsolute' in window ? 'deviceorientationabsolute' : 'deviceorientation';
-  window.addEventListener(eventName, handleOrientation, true);
+  // Relative (gyro-fused) orientation: steady for aiming, unlike compass-based absolute alpha
+  window.addEventListener('deviceorientation', handleOrientation, true);
   window.addEventListener('devicemotion', handleMotion, true);
+  startGyroSensor();
+  setPowerScale(powerScaleKey);
+  setPowerRing(0);
 }
 
 // --- 5. Utilities ---
@@ -486,19 +464,17 @@ function cancelInput() {
   if (isAiming) {
     isAiming = false;
     clearInterval(aimInterval);
-    aimButton.style.backgroundColor = '#2196F3';
-    aimButton.textContent = 'HOLD TO SET ANGLE';
+    aimButton.style.backgroundColor = '';
+    aimButton.textContent = 'HOLD TO AIM';
   }
-  if (isPutting) {
-    isPutting = false;
-    clearInterval(swingInterval);
-    puttButton.style.backgroundColor = '#4CAF50';
-    puttButton.textContent = 'HOLD TO PUTT';
+  if (puttState !== 'idle') {
+    resetPuttButton();
+    setPowerRing(0);
   }
 }
 
 function setMyTurn(mine) {
-  if (!mine && isMyTurn) cancelInput();
+  if (!mine && isMyTurn && !practiceMode) cancelInput();
   isMyTurn = mine;
   controlsSection.classList.toggle('locked', !mine);
   turnBanner.classList.toggle('my-turn', mine);
@@ -532,7 +508,7 @@ socket.on('turn', (turn) => {
 const statusVibration = { putt_accepted: 40, putt_rejected: [30, 60, 30], not_your_turn: [30, 60, 30], holed: [80, 60, 160] };
 
 socket.on('game_status', (data) => {
-  if (isPutting || isAiming) return;
+  if (puttState !== 'idle' || isAiming) return;
   statusDisplay.textContent = data.message;
   const pattern = statusVibration[data.state];
   if (pattern && navigator.vibrate) navigator.vibrate(pattern);

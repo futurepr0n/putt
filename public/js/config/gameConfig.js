@@ -50,7 +50,9 @@ export const gameConfig = {
   // Green deceleration while rolling (m/s^2); roll distance ≈ v² / (2 * rollingDecel)
   green: {
     rollingDecel: 0.8,
-    stopSpeed: 0.04
+    stopSpeed: 0.04,
+    // Measured average deceleration incl. friction (sim: power 0.6/0.75/0.8 -> 6.5/9.9/10.9 m); used for path preview
+    effectiveDecel: 1.3
   },
 
   // Extra deceleration while in a sand trap (m/s^2)

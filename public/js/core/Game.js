@@ -5,6 +5,7 @@ import { PlayerManager } from './PlayerManager.js';
 import { CourseManager } from '../course/CourseManager.js';
 import { UIManager } from '../ui/UIManager.js';
 import { gameConfig } from '../config/gameConfig.js';
+import { unlockAudioOnGesture, playPuttClick, playLipOut } from '../utils/Sound.js';
 
 // Phases of play: waiting (no one can shoot) → aiming → rolling → (sinking) → next turn
 export class Game {
@@ -42,6 +43,8 @@ export class Game {
     this.socketManager = new SocketManager(this.roomId, this);
 
     this.uiManager.init();
+    unlockAudioOnGesture();
+    this.courseManager.onLipOut = playLipOut;
     this.connectSocketEvents();
     this.socketManager.init();
 
@@ -63,8 +66,14 @@ export class Game {
       this.physicsManager.update(dt);
     }
 
-    if (this.courseManager) this.updateShot();
-    if (this.uiManager) this.uiManager.update();
+    if (this.courseManager) {
+      this.updateShot();
+      this.courseManager.update(time);
+    }
+    if (this.uiManager) {
+      this.uiManager.update();
+      this.uiManager.effects.update(dt);
+    }
 
     if (this.sceneManager && this.sceneManager.renderer) {
       this.sceneManager.render(dt);
@@ -186,6 +195,8 @@ export class Game {
     if (!this.courseManager.puttBall(this.aimAngle + deviation, power)) return;
 
     this.players.recordStroke(player.id);
+    playPuttClick(power);
+    this.uiManager.effects.startTrail(player.color);
     this.phase = 'rolling';
     this.lastPuttTime = performance.now();
     this.uiManager.hideAim();
@@ -204,12 +215,16 @@ export class Game {
         const p = this.players.get(this.activeId);
         this.uiManager.showMessage(`${p.name} holes out in ${p.strokes}!`);
         this.notify('holed', `In the hole! ${p.strokes} strokes (par ${this.par})`, p.id);
+        const hole = cm.hole;
+        this.uiManager.effects.burstConfetti(hole.holeCenterX, hole.holeCenterZ, [p.color, 0xffd700, 0xffffff, 0xff5a5a, 0x5ab4ff]);
+        this.uiManager.effects.fadeTrail();
         return;
       }
 
       const pos = cm.getBallPosition();
       if (pos) {
         this.sceneManager.followTarget(pos);
+        this.uiManager.effects.updateTrail(pos);
         if (this.isOutOfBounds(pos)) {
           this.handleOutOfBounds();
           return;
@@ -244,6 +259,7 @@ export class Game {
 
   finishShot() {
     const id = this.activeId;
+    this.uiManager.effects.fadeTrail();
     if (this.players.enforceMaxStrokes(id)) {
       this.courseManager.removeBall(id);
       const p = this.players.get(id);
@@ -272,6 +288,12 @@ export class Game {
 
   refreshAimArrow() {
     this.uiManager.updateDirectionArrow({ x: Math.sin(this.aimAngle), y: 0, z: Math.cos(this.aimAngle) });
+    const player = this.players.get(this.activeId);
+    if (player && this.phase === 'aiming') {
+      // Aim line runs a little past the cup so you can read the line through it
+      const length = this.courseManager.distanceToHole(player.id) + 0.6;
+      this.uiManager.showAimPath(this.aimAngle, length, player.color);
+    }
   }
 
   isActiveInput(data) {

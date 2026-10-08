@@ -1,6 +1,7 @@
 const THREE = window.THREE;
 const CANNON = window.CANNON;
 import { gameConfig } from '../../config/gameConfig.js';
+import { woodTexture } from '../../utils/Textures.js';
 
 export class Barrier {
   constructor(sceneManager, physicsManager) {
@@ -10,9 +11,7 @@ export class Barrier {
     this.barrierMesh = null;
     this.barrierBody = null;
     
-    this.material = new THREE.MeshStandardMaterial({ 
-      color: gameConfig.materials.rough 
-    });
+    this.material = new THREE.MeshStandardMaterial({ map: woodTexture(), roughness: 0.8 });
   }
   
   create(x, z, width) {

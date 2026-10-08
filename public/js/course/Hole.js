@@ -1,6 +1,7 @@
 const THREE = window.THREE;
 const CANNON = window.CANNON;
 import { gameConfig } from '../config/gameConfig.js';
+import { playCupRattle } from '../utils/Sound.js';
 
 export class Hole {
   constructor(sceneManager, physicsManager) {
@@ -19,8 +20,8 @@ export class Hole {
 
     this.materials = {
       hole: new THREE.MeshStandardMaterial({ color: gameConfig.materials.hole }),
-      flag: new THREE.MeshStandardMaterial({ color: gameConfig.materials.flag }),
-      pole: new THREE.MeshStandardMaterial({ color: gameConfig.materials.pole })
+      flag: new THREE.MeshStandardMaterial({ color: gameConfig.materials.flag, side: THREE.DoubleSide, roughness: 0.7 }),
+      pole: new THREE.MeshStandardMaterial({ color: 0xf5f5f5, roughness: 0.4, metalness: 0.3 })
     };
   }
 
@@ -58,7 +59,7 @@ export class Hole {
 
     const opening = new THREE.Mesh(
       new THREE.CircleGeometry(this.holeRadius, 48),
-      new THREE.MeshBasicMaterial({ color: gameConfig.materials.hole, ...decal })
+      new THREE.MeshBasicMaterial({ map: Hole.cupTexture(), ...decal })
     );
     const rim = new THREE.Mesh(
       new THREE.RingGeometry(this.holeRadius * 0.92, this.holeRadius, 48),
@@ -67,6 +68,39 @@ export class Hole {
     rim.position.z = 0.0005;
     this.holeMesh.add(opening, rim);
     this.sceneManager.add(this.holeMesh);
+  }
+
+  // Radial shading so the opening reads as a deep cup rather than a black disc
+  static cupTexture() {
+    if (!Hole._cupTexture) {
+      const c = document.createElement('canvas');
+      c.width = c.height = 128;
+      const ctx = c.getContext('2d');
+      const g = ctx.createRadialGradient(56, 70, 4, 64, 64, 64);
+      g.addColorStop(0, '#000000');
+      g.addColorStop(0.6, '#0b0b0b');
+      g.addColorStop(0.9, '#2a2a2a');
+      g.addColorStop(1, '#4a4a4a');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 128, 128);
+      Hole._cupTexture = new THREE.CanvasTexture(c);
+      Hole._cupTexture.encoding = THREE.sRGBEncoding;
+    }
+    return Hole._cupTexture;
+  }
+
+  // Ripple the flag; called every frame
+  update(time) {
+    if (!this.flagMesh) return;
+    const pos = this.flagMesh.geometry.attributes.position;
+    const base = this.flagBase;
+    const t = time / 1000;
+    for (let i = 0; i < pos.count; i++) {
+      const x = base[i * 3];
+      const along = x + 0.15; // 0 at the pole, 0.3 at the free end
+      pos.setZ(i, Math.sin(along * 18 - t * 5) * 0.03 * (along / 0.3));
+    }
+    pos.needsUpdate = true;
   }
 
   createFlag(x, z) {
@@ -78,7 +112,8 @@ export class Hole {
     this.sceneManager.add(this.poleMesh);
 
     // Create flag
-    const flagGeometry = new THREE.PlaneGeometry(0.3, 0.2);
+    const flagGeometry = new THREE.PlaneGeometry(0.3, 0.2, 12, 1);
+    this.flagBase = Float32Array.from(flagGeometry.attributes.position.array);
     this.flagMesh = new THREE.Mesh(flagGeometry, this.materials.flag);
     this.flagMesh.position.set(x + 0.15, 0.8, z);
     this.flagMesh.castShadow = true;
@@ -89,9 +124,10 @@ export class Hole {
     // Create a subtle hole gradient around the hole
     const holeGradientGeometry = new THREE.RingGeometry(this.holeRadius, this.holeRadius * 2, 48);
     const holeGradientMaterial = new THREE.MeshBasicMaterial({
-      color: 0x005500,
+      color: 0x0a3a0a,
       transparent: true,
-      opacity: 0.3,
+      opacity: 0.18,
+      depthWrite: false,
       side: THREE.DoubleSide
     });
     this.holeGradientMesh = new THREE.Mesh(holeGradientGeometry, holeGradientMaterial);
@@ -115,7 +151,7 @@ export class Hole {
     const startTime = Date.now();
 
     // Try to play a sound effect
-    this.playSinkSound();
+    playCupRattle();
 
     // Animation function
     const animateBallSink = () => {
@@ -155,36 +191,6 @@ export class Hole {
 
     // Start the animation
     animateBallSink();
-  }
-
-  playSinkSound() {
-    try {
-      // Create an audio context
-      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-
-      // Create oscillator for the "plop" sound
-      const osc = audioContext.createOscillator();
-      const gain = audioContext.createGain();
-
-      // Connect everything
-      osc.connect(gain);
-      gain.connect(audioContext.destination);
-
-      // Set properties
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(300, audioContext.currentTime);
-      osc.frequency.exponentialRampToValueAtTime(150, audioContext.currentTime + 0.3);
-
-      gain.gain.setValueAtTime(0, audioContext.currentTime);
-      gain.gain.linearRampToValueAtTime(0.3, audioContext.currentTime + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.5);
-
-      // Play the sound
-      osc.start();
-      osc.stop(audioContext.currentTime + 0.5);
-    } catch (error) {
-      console.error("Error playing hole sound:", error);
-    }
   }
 
   remove() {
