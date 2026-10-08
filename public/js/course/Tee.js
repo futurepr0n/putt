@@ -19,29 +19,29 @@ export class Tee {
   }
   
   createTeeMarker(x, z) {
-    // Make the tee marker more visible
-    const teeGeometry = new THREE.CylinderGeometry(0.2, 0.2, 0.05, 16);
-    const teeMaterial = new THREE.MeshStandardMaterial({ 
-      color: 0xFFFFFF,
-      emissive: 0x333333
-    });
+    // Flat rubber tee mat flush with the green; a raised puck would swallow the ball
+    const decal = { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 };
+    const teeGeometry = new THREE.RingGeometry(0.17, 0.2, 40);
+    const teeMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, ...decal });
     this.teeMesh = new THREE.Mesh(teeGeometry, teeMaterial);
-    
-    // Position it higher to be more visible
-    this.teeMesh.position.set(x, 0.05, z);
+    this.teeMesh.rotation.x = -Math.PI / 2;
+    this.teeMesh.position.set(x, 0.003, z);
     this.teeMesh.receiveShadow = true;
     this.sceneManager.add(this.teeMesh);
     
     // Also add a visual indicator for the tee area
     const teeAreaGeometry = new THREE.CircleGeometry(0.4, 32);
-    const teeAreaMaterial = new THREE.MeshStandardMaterial({ 
-      color: 0x90EE90, // Light green
-      transparent: true,
-      opacity: 0.7
+    const teeAreaMaterial = new THREE.MeshStandardMaterial({
+      color: 0x2f6b35, // Darker rubber mat
+      roughness: 1,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1
     });
     this.teeAreaMesh = new THREE.Mesh(teeAreaGeometry, teeAreaMaterial);
     this.teeAreaMesh.rotation.x = -Math.PI / 2; // Flat on ground
-    this.teeAreaMesh.position.set(x, 0.01, z);
+    this.teeAreaMesh.position.set(x, 0.002, z);
+    this.teeAreaMesh.receiveShadow = true;
     this.sceneManager.add(this.teeAreaMesh);
   }
   

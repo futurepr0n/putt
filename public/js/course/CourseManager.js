@@ -8,6 +8,7 @@ import { Barrier } from './obstacles/Barrier.js';
 import { SandTrap } from './obstacles/SandTrap.js';
 import { Hill } from './obstacles/Hill.js';
 import { SafetyFloor } from './SafetyFloor.js';
+import { grassTexture, woodTexture } from '../utils/Textures.js';
 
 export class CourseManager {
   constructor(sceneManager, physicsManager) {
@@ -26,8 +27,8 @@ export class CourseManager {
     this.groundBody = null;
 
     this.materials = {
-      green: new THREE.MeshStandardMaterial({ color: gameConfig.materials.green }),
-      rough: new THREE.MeshStandardMaterial({ color: gameConfig.materials.rough }),
+      green: new THREE.MeshStandardMaterial({ map: grassTexture(), roughness: 0.95 }),
+      rough: new THREE.MeshStandardMaterial({ map: woodTexture(), roughness: 0.8 }),
       sand: new THREE.MeshStandardMaterial({ color: gameConfig.materials.sand })
     };
 
@@ -62,6 +63,7 @@ export class CourseManager {
   createGround() {
     // Create the base green - a simple flat plane
     const groundGeometry = new THREE.PlaneGeometry(this.courseSize.width, this.courseSize.length);
+    this.materials.green.map.repeat.set(1, this.courseSize.length / 8);
     this.groundMesh = new THREE.Mesh(groundGeometry, this.materials.green);
     this.groundMesh.rotation.x = -Math.PI / 2;
     this.groundMesh.receiveShadow = true;
@@ -292,6 +294,7 @@ export class CourseManager {
       // Lip-out once per pass: lose some pace and get nudged off line
       if (this.lippingOut) return;
       this.lippingOut = true;
+      if (this.onLipOut) this.onLipOut();
       const lip = Math.sign(dx * sz - dz * sx) || 1;
       const scale = 0.75;
       const angle = lip * 0.25 * (1 - distance / r);
@@ -339,6 +342,11 @@ export class CourseManager {
 
   isHoleInProgress() {
     return this.holeInProgress;
+  }
+
+  update(time) {
+    if (this.hole) this.hole.update(time);
+    for (const ball of this.balls.values()) ball.syncContactShadow();
   }
 
   puttBall(angle, power) {

@@ -1,5 +1,5 @@
-//const THREE = window.THREE;
 const THREE = window.THREE;
+import { roughTexture, skyTexture } from '../utils/Textures.js';
 
 export class SceneManager {
   constructor() {
@@ -18,8 +18,14 @@ export class SceneManager {
     
     // Create renderer
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    // Sharp on high-DPI screens, capped so 4K TVs stay fast
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.outputEncoding = THREE.sRGBEncoding;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.05;
     this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     
     this.ambientLight = null;
     this.directionalLight = null;
@@ -42,6 +48,7 @@ export class SceneManager {
     
     // Add lighting
     this.setupLighting();
+    this.setupEnvironment();
     
     // Setup controls
     this.setupControls();
@@ -51,17 +58,65 @@ export class SceneManager {
 
   
   setupLighting() {
-    // Add ambient light
-    this.ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+    // Sky/ground bounce light keeps shadowed sides from going flat black
+    this.ambientLight = new THREE.HemisphereLight(0xcfe8ff, 0x4a6b2a, 0.65);
     this.scene.add(this.ambientLight);
-    
-    // Add directional light for shadows
-    this.directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    this.directionalLight.position.set(10, 20, 10);
+
+    // Low warm sun for long, readable shadows across the green
+    this.directionalLight = new THREE.DirectionalLight(0xfff1d6, 1.1);
+    this.directionalLight.position.set(8, 14, -6);
     this.directionalLight.castShadow = true;
+    this.directionalLight.shadow.mapSize.set(2048, 2048);
+    this.directionalLight.shadow.bias = -0.0005;
+    this.directionalLight.shadow.normalBias = 0.02;
+    // Shadow frustum sized to cover the whole course (8 x 16) plus margin
+    const cam = this.directionalLight.shadow.camera;
+    cam.left = -11; cam.right = 11; cam.top = 11; cam.bottom = -11;
+    cam.near = 1; cam.far = 45;
     this.scene.add(this.directionalLight);
   }
-  
+
+  // Static park around the course: sky, distant rough and a ring of trees
+  setupEnvironment() {
+    this.scene.background = skyTexture();
+    this.scene.fog = new THREE.Fog(0xcfe6ef, 28, 75);
+
+    const rough = new THREE.Mesh(
+      new THREE.PlaneGeometry(160, 160),
+      new THREE.MeshStandardMaterial({ map: roughTexture(), roughness: 1 })
+    );
+    rough.rotation.x = -Math.PI / 2;
+    rough.position.y = -0.05;
+    rough.receiveShadow = true;
+    this.scene.add(rough);
+
+    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6b4a2b, roughness: 1 });
+    const leafMats = [0x2f7d32, 0x3b8f3a, 0x276b2c].map(c => new THREE.MeshStandardMaterial({ color: c, roughness: 0.9, flatShading: true }));
+    const trunkGeo = new THREE.CylinderGeometry(0.15, 0.22, 1.2, 6);
+    const leafGeo = new THREE.ConeGeometry(1.1, 2.6, 7);
+
+    // Deterministic placement so the park looks the same every load
+    let seed = 7;
+    const rand = () => ((seed = (seed * 9301 + 49297) % 233280) / 233280);
+    for (let i = 0; i < 46; i++) {
+      const angle = (i / 46) * Math.PI * 2 + rand() * 0.2;
+      const radius = 15 + rand() * 18;
+      const x = Math.sin(angle) * radius * 0.75;
+      const z = Math.cos(angle) * radius;
+      const scale = 0.8 + rand() * 0.9;
+      const tree = new THREE.Group();
+      const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+      trunk.position.y = 0.6;
+      const leaves = new THREE.Mesh(leafGeo, leafMats[i % leafMats.length]);
+      leaves.position.y = 2.4;
+      trunk.castShadow = leaves.castShadow = true;
+      tree.add(trunk, leaves);
+      tree.position.set(x, 0, z);
+      tree.scale.setScalar(scale);
+      this.scene.add(tree);
+    }
+  }
+
   setupControls() {
     // OrbitControls is loaded by game.html before this module runs
     if (!THREE.OrbitControls) {
@@ -128,23 +183,8 @@ export class SceneManager {
     });
   }
   
-  clear() {
-    // Remove all meshes except the camera
-    while(this.scene.children.length > 0) {
-      const object = this.scene.children[0];
-      if (object.type === 'PerspectiveCamera') {
-        this.scene.remove(object);
-        this.scene.add(object);
-      } else {
-        this.scene.remove(object);
-      }
-    }
-    
-    // Re-add lights
-    this.setupLighting();
-  }
-  
   handleResize() {
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);

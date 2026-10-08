@@ -71,6 +71,49 @@ export class Ball {
     
     // Add to scene
     this.sceneManager.add(this.ballMesh);
+
+    // Soft contact shadow: grounds the ball visually on the green
+    this.contactShadow = new THREE.Mesh(
+      new THREE.CircleGeometry(this.ballRadius * 1.6, 24),
+      new THREE.MeshBasicMaterial({
+        map: Ball.contactTexture(),
+        transparent: true,
+        depthWrite: false,
+        polygonOffset: true,
+        polygonOffsetFactor: -3,
+        polygonOffsetUnits: -3
+      })
+    );
+    this.contactShadow.rotation.x = -Math.PI / 2;
+    this.contactShadow.position.set(x, 0.004, z);
+    this.sceneManager.add(this.contactShadow);
+  }
+
+  static contactTexture() {
+    if (!Ball._contactTexture) {
+      const c = document.createElement('canvas');
+      c.width = c.height = 64;
+      const ctx = c.getContext('2d');
+      const g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+      g.addColorStop(0, 'rgba(0,0,0,0.55)');
+      g.addColorStop(0.5, 'rgba(0,0,0,0.25)');
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 64, 64);
+      Ball._contactTexture = new THREE.CanvasTexture(c);
+    }
+    return Ball._contactTexture;
+  }
+
+  // Keep the contact shadow under the ball; fade it as the ball lifts or drops into the cup
+  syncContactShadow() {
+    if (!this.contactShadow || !this.ballBody) return;
+    const p = this.ballBody.position;
+    this.contactShadow.position.set(p.x, 0.004, p.z);
+    const lift = Math.abs(p.y - this.ballRadius);
+    const fade = Math.max(0, 1 - lift / 0.12);
+    this.contactShadow.material.opacity = fade * (this.marked ? 0.35 : 1);
+    this.contactShadow.visible = fade > 0.02;
   }
   
   createPhysics(x, y, z) {
@@ -233,6 +276,11 @@ export class Ball {
     if (this.debugSphere) {
       this.sceneManager.remove(this.debugSphere);
       this.debugSphere = null;
+    }
+
+    if (this.contactShadow) {
+      this.sceneManager.remove(this.contactShadow);
+      this.contactShadow = null;
     }
     
     if (this.rollingResistance) {

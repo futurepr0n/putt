@@ -11,28 +11,41 @@
     body { 
       margin: 0; 
       overflow: hidden; 
-      font-family: Arial, sans-serif;
-      background-color: #000;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background-color: #0f2a18;
+    }
+
+    /* Shared frosted-panel look for HUD overlays created in JS */
+    body > div:not(#loadingOverlay):not(.game-title),
+    body > button {
+      font-family: inherit;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
     }
     
     #gameInfo {
       position: absolute;
       top: 10px;
       left: 10px;
-      background-color: rgba(0, 0, 0, 0.7);
+      background-color: rgba(10, 30, 16, 0.72);
       color: white;
-      padding: 15px;
-      border-radius: 5px;
+      padding: 14px 16px;
+      border-radius: 14px;
       z-index: 100;
-      max-width: 250px;
+      max-width: 240px;
+      font-size: 14px;
+      line-height: 1.4;
     }
+    #gameInfo h2 { margin: 0 0 6px; font-size: 18px; }
     
     #qrCodeContainer {
-      margin-top: 15px;
+      margin-top: 12px;
       background-color: white;
       padding: 10px;
-      border-radius: 5px;
-      text-align: center;
+      border-radius: 10px;
+      display: flex;
+      justify-content: center;
     }
     
     #controllerLink {
@@ -83,9 +96,10 @@
       left: 50%;
       transform: translateX(-50%);
       font-size: 24px;
-      font-weight: bold;
+      font-weight: 800;
+      letter-spacing: 0.03em;
       color: white;
-      text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.7);
+      text-shadow: 0 2px 10px rgba(0, 0, 0, 0.55);
       z-index: 100;
     }
     

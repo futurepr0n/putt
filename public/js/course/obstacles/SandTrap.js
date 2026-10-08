@@ -1,6 +1,7 @@
 const THREE = window.THREE;
 const CANNON = window.CANNON;
 import { gameConfig } from '../../config/gameConfig.js';
+import { sandTexture } from '../../utils/Textures.js';
 
 export class SandTrap {
   constructor(sceneManager, physicsManager) {
@@ -14,7 +15,8 @@ export class SandTrap {
 
     // Create material
     this.material = new THREE.MeshStandardMaterial({
-      color: gameConfig.materials.sand,
+      map: sandTexture(),
+      roughness: 1,
       polygonOffset: true,
       polygonOffsetFactor: -1,
       polygonOffsetUnits: -1
